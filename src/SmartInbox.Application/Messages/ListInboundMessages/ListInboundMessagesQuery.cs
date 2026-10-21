@@ -1,5 +1,6 @@
 using MediatR;
-using SmartInbox.Application.Common.Interfaces;
+using SmartInbox.Application.Messages.Ports;
+using SmartInbox.Application.Messages.Models;
 
 namespace SmartInbox.Application.Messages.ListInboundMessages;
 

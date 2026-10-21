@@ -28,7 +28,7 @@ dotnet ef database update --project 'src/SmartInbox.Infrastructure/SmartInbox.In
 
 The worker defaults to disabled and the API can ingest and retrieve messages without an OpenAI credential. For a future controlled live evaluation, first confirm the provider and model account availability, then put the key in User Secrets or the process environment, set `EmailAnalysis:Provider=openai`, select the model under `OpenAI:Model`, review the bounded retry/concurrency/timeout limits, and explicitly set `EmailProcessing:Enabled=true`. A protected synthetic message can then be submitted through `POST /api/v1/messages`; poll `GET /api/v1/messages/{id}` for its classification and safe processing state. That evaluation can incur API charges. Do not use real customer email for this demo.
 
-The automated evaluation harness in `tests/SmartInbox.Application.Tests/EmailAnalysis/synthetic-emails.jsonl` contains 31 synthetic cases. It applies deterministic validation to fixed candidate outputs; it is not a live model quality benchmark.
+The automated evaluation harness in `tests/SmartInbox.Application.Tests/Messages/Classification/synthetic-emails.jsonl` contains 31 synthetic cases. It applies deterministic validation to fixed candidate outputs; it is not a live model quality benchmark.
 
 ## Design and operational limits
 

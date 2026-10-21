@@ -7,7 +7,7 @@ using Microsoft.AspNetCore.TestHost;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Npgsql;
-using SmartInbox.Application.Common.Interfaces;
+using SmartInbox.Application.Messages.Classification.Ports;
 using SmartInbox.Infrastructure.Persistence;
 
 namespace SmartInbox.API.Tests;

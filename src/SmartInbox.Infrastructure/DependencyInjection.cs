@@ -9,10 +9,11 @@ using OpenAI.Responses;
 using OpenAI;
 using System.ClientModel;
 using System.ClientModel.Primitives;
-using SmartInbox.Application.Common.Models;
-using SmartInbox.Application.EmailAnalysis;
-using SmartInbox.Infrastructure.AI;
-using SmartInbox.Infrastructure.Processing;
+using SmartInbox.Application.Messages.Classification.Models;
+using SmartInbox.Application.Messages.Classification;
+using SmartInbox.Application.Messages.Classification.Ports;
+using SmartInbox.Infrastructure.Messages.Classification.OpenAI;
+using SmartInbox.Infrastructure.Messages.Classification;
 using SmartInbox.Application;
 using SmartInbox.Infrastructure.Persistence;
 

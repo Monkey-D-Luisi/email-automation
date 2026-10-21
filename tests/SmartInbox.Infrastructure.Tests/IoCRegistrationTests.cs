@@ -3,7 +3,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Options;
 using SmartInbox.Application.Common.DependencyInjection;
-using SmartInbox.Application.Common.Interfaces;
+using SmartInbox.Application.Messages.Ports;
 using SmartInbox.Infrastructure;
 
 namespace SmartInbox.Infrastructure.Tests;

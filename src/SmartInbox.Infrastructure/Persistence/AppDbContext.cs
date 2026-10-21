@@ -1,4 +1,5 @@
 using Microsoft.EntityFrameworkCore;
+using SmartInbox.Infrastructure.Messages.Persistence;
 
 namespace SmartInbox.Infrastructure.Persistence;
 

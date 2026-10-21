@@ -1,5 +1,5 @@
 using MediatR;
-using SmartInbox.Application.Common.Interfaces;
+using SmartInbox.Application.Messages.Ports;
 using SmartInbox.Domain.Messages;
 
 namespace SmartInbox.Application.Messages.ReceiveInboundMessage;

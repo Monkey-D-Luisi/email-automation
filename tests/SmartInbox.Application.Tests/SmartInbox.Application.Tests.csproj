@@ -24,7 +24,7 @@
   </ItemGroup>
 
   <ItemGroup>
-    <None Update="EmailAnalysis\synthetic-emails.jsonl" CopyToOutputDirectory="PreserveNewest" />
+    <None Update="Messages\Classification\synthetic-emails.jsonl" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
 </Project>

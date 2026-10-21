@@ -1,8 +1,9 @@
 using System.Net;
 using System.Net.Http.Json;
 using Microsoft.AspNetCore.Mvc;
-using SmartInbox.Application.Common.Interfaces;
-using SmartInbox.Application.Common.Models;
+using SmartInbox.Application.Messages.Ports;
+using SmartInbox.Application.Messages.Classification.Ports;
+using SmartInbox.Application.Messages.Classification.Models;
 using SmartInbox.Domain.Messages;
 
 namespace SmartInbox.API.Tests.Messages;

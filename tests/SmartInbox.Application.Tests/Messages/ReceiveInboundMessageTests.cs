@@ -1,5 +1,6 @@
 using NSubstitute;
-using SmartInbox.Application.Common.Interfaces;
+using SmartInbox.Application.Messages.Ports;
+using SmartInbox.Application.Messages.Models;
 using SmartInbox.Application.Messages.ListInboundMessages;
 using SmartInbox.Application.Messages.ReceiveInboundMessage;
 using SmartInbox.Domain.Messages;

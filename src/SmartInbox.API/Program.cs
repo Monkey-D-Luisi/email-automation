@@ -2,7 +2,7 @@ using System.Text.Json.Serialization;
 using SmartInbox.API.Authentication;
 using SmartInbox.API.Errors;
 using SmartInbox.API.Health;
-using SmartInbox.API.V1.Endpoints;
+using SmartInbox.API.V1.Messages.Endpoints;
 using SmartInbox.Application;
 using SmartInbox.Infrastructure;
 
