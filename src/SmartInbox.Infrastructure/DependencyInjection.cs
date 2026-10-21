@@ -12,6 +12,8 @@ using System.ClientModel.Primitives;
 using SmartInbox.Application.Messages.Classification.Models;
 using SmartInbox.Application.Messages.Classification;
 using SmartInbox.Application.Messages.Classification.Ports;
+using SmartInbox.Application.WorkItems.Models;
+using SmartInbox.Application.WorkItems.Ports;
 using SmartInbox.Infrastructure.Messages.Classification.OpenAI;
 using SmartInbox.Infrastructure.Messages.Classification;
 using SmartInbox.Application;
@@ -34,6 +36,7 @@ public static class DependencyInjection
             typeof(Application.DependencyInjection).Assembly,
             typeof(DependencyInjection).Assembly);
         ConfigureEmailProcessing(services, configuration);
+        ConfigureEmailDrafting(services, configuration);
         return services;
     }
 
@@ -68,7 +71,8 @@ public static class DependencyInjection
         }
 
         services.AddSingleton(typeof(EmailAnalysisProviderType), providerType);
-        var openAiSelectedAndEnabled = processing.Enabled && providerType == EmailAnalysisProviderType.OpenAi;
+        var drafting = configuration.GetSection(EmailDraftingOptions.SectionName).Get<EmailDraftingOptions>() ?? new();
+        var openAiSelectedAndEnabled = drafting.Enabled || processing.Enabled && providerType == EmailAnalysisProviderType.OpenAi;
         var openAiOptions = services.AddOptions<OpenAiEmailAnalysisOptions>()
             .Bind(configuration.GetSection(OpenAiEmailAnalysisOptions.SectionName));
         if (openAiSelectedAndEnabled)
@@ -103,5 +107,22 @@ public static class DependencyInjection
         });
 
         services.AddHostedService<InboundMessageBackgroundService>();
+    }
+
+    private static void ConfigureEmailDrafting(IServiceCollection services, IConfiguration configuration)
+    {
+        var drafting = configuration.GetSection(EmailDraftingOptions.SectionName).Get<EmailDraftingOptions>() ?? new();
+        services.AddSingleton(drafting);
+        services.AddOptions<EmailDraftingOptions>()
+            .Bind(configuration.GetSection(EmailDraftingOptions.SectionName))
+            .Validate(options => options.MaxConcurrency is >= 1 and <= 2,
+                "EmailDrafting:MaxConcurrency must be between 1 and 2.")
+            .Validate(options => options.RequestTimeoutSeconds is >= 1 and <= 120,
+                "EmailDrafting:RequestTimeoutSeconds must be between 1 and 120.")
+            .Validate(options => options.MaxInputCharacters is >= 1 and <= 12_000,
+                "EmailDrafting:MaxInputCharacters must be between 1 and 12000.")
+            .Validate(options => options.MaxOutputTokens is >= 1 and <= 2_000,
+                "EmailDrafting:MaxOutputTokens must be between 1 and 2000.")
+            .ValidateOnStart();
     }
 }

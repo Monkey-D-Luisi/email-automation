@@ -6,7 +6,9 @@ using SmartInbox.Application.Common.DependencyInjection;
 using SmartInbox.Application.Messages.Ports;
 using SmartInbox.Application.Messages.Models;
 using SmartInbox.Domain.Messages;
+using SmartInbox.Domain.WorkItems;
 using SmartInbox.Infrastructure.Persistence;
+using SmartInbox.Infrastructure.WorkItems.Persistence;
 
 namespace SmartInbox.Infrastructure.Messages.Persistence;
 
@@ -162,6 +164,8 @@ internal sealed class InboundMessageRepository(AppDbContext dbContext) : IInboun
         WriteMetrics(record, metrics);
         record.Classification = ToRecord(id, classification);
         dbContext.EmailClassifications.Add(record.Classification);
+        dbContext.WorkItems.Add(WorkItemPersistenceMapper.ToRecord(
+            WorkItem.Create(id, classification, classification.ClassifiedAt)));
         await dbContext.SaveChangesAsync(cancellationToken);
         await transaction.CommitAsync(cancellationToken);
         return true;
