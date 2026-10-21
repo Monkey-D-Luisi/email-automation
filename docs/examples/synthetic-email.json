@@ -1,0 +1,19 @@
+{
+  "source": "demo",
+  "mailboxId": "synthetic-mailbox-001",
+  "externalMessageId": "demo-message-001",
+  "externalThreadId": "demo-thread-001",
+  "senderEmail": "alex@example.test",
+  "senderName": "Alex Example",
+  "subject": "Consulta de demostración",
+  "bodyText": "Hola, este correo es completamente sintético y se usa para validar Smart Inbox Automation.",
+  "receivedAt": "2026-10-21T09:00:00Z",
+  "attachments": [
+    {
+      "externalAttachmentId": "demo-attachment-001",
+      "name": "presupuesto-demo.pdf",
+      "contentType": "application/pdf",
+      "sizeBytes": 12345
+    }
+  ]
+}
