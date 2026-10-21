@@ -16,4 +16,19 @@ internal sealed class InboundMessageRecord
     public string Status { get; set; } = string.Empty;
     public string ContentFingerprint { get; set; } = string.Empty;
     public string AttachmentsJson { get; set; } = "[]";
+    public int ProcessingAttemptCount { get; set; }
+    public string? FailureKind { get; set; }
+    public string? FailureMessage { get; set; }
+    public bool ProcessingRetryable { get; set; }
+    public DateTimeOffset? NextAttemptAt { get; set; }
+    public Guid? ProcessingLeaseOwner { get; set; }
+    public DateTimeOffset? ProcessingLeaseExpiresAt { get; set; }
+    public string? LastProviderId { get; set; }
+    public string? LastModel { get; set; }
+    public long? LastDurationMilliseconds { get; set; }
+    public int? LastInputTokens { get; set; }
+    public int? LastCachedInputTokens { get; set; }
+    public int? LastOutputTokens { get; set; }
+    public decimal? LastEstimatedCostUsd { get; set; }
+    public EmailClassificationRecord? Classification { get; set; }
 }

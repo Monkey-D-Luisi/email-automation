@@ -54,17 +54,49 @@ public sealed class InboundMessageTests
     }
 
     [Fact]
-    public void Status_transitions_allow_processing_retry_and_terminal_completion()
+    public void Status_transitions_allow_processing_retry_and_require_a_classification_to_complete()
     {
         var message = Create();
 
         Assert.Throws<InvalidOperationException>(() => message.TransitionTo(InboundMessageStatus.Processed));
         message.TransitionTo(InboundMessageStatus.Processing);
-        message.TransitionTo(InboundMessageStatus.Failed);
+        message.FailProcessing(
+            ProcessingFailureKind.TransientConnectivity,
+            "Provider unavailable.",
+            retryable: true,
+            ImportedAt.AddSeconds(30));
         message.TransitionTo(InboundMessageStatus.Processing);
-        message.TransitionTo(InboundMessageStatus.Processed);
+        message.CompleteProcessing(
+            EmailClassification.Create(
+                EmailCategory.GeneralInquiry,
+                EmailPriority.Normal,
+                "A general question.",
+                "en",
+                [],
+                [],
+                [],
+                [],
+                [],
+                ImportedAt),
+            new EmailAnalysisMetrics("openai", "gpt-6-luna", 100, 10, 0, 20, null));
 
+        Assert.Equal(2, message.ProcessingAttemptCount);
+        Assert.Equal(InboundMessageStatus.Processed, message.Status);
+        Assert.NotNull(message.Classification);
         Assert.Throws<InvalidOperationException>(() => message.TransitionTo(InboundMessageStatus.Processing));
+    }
+
+    [Fact]
+    public void Failure_without_new_provider_metrics_preserves_the_last_available_metrics()
+    {
+        var message = Create();
+        var metrics = new EmailAnalysisMetrics("openai", "gpt-6-luna", 120, 100, 20, 30, null);
+        message.TransitionTo(InboundMessageStatus.Processing);
+        message.FailProcessing(ProcessingFailureKind.InvalidStructuredOutput, "Invalid response.", false, null, metrics);
+        message.TransitionTo(InboundMessageStatus.Processing);
+        message.FailProcessing(ProcessingFailureKind.TransientConnectivity, "Provider unavailable.", true, ImportedAt.AddSeconds(30));
+
+        Assert.Equal(metrics, message.AnalysisMetrics);
     }
 
     [Fact]

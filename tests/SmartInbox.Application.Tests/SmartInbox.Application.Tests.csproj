@@ -23,4 +23,8 @@
     <ProjectReference Include="..\..\src\SmartInbox.Domain\SmartInbox.Domain.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <None Update="EmailAnalysis\synthetic-emails.jsonl" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
 </Project>

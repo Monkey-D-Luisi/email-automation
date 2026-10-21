@@ -94,5 +94,31 @@ public static class MessageEndpoints
             attachment.ExternalAttachmentId,
             attachment.Name,
             attachment.ContentType,
-            attachment.SizeBytes)).ToArray());
+            attachment.SizeBytes)).ToArray(),
+        message.Classification is null ? null : new EmailClassificationResponseV1(
+            message.Classification.Category.ToString(),
+            message.Classification.Priority.ToString(),
+            message.Classification.Summary,
+            message.Classification.Language,
+            message.Classification.Facts.Select(fact => new EmailFactResponseV1(fact.Type.ToString(), fact.Value)).ToArray(),
+            message.Classification.MissingInformation,
+            message.Classification.Warnings,
+            message.Classification.UncertaintyReasons,
+            message.Classification.ReviewReasons.Select(reason => reason.ToString()).ToArray(),
+            message.Classification.RequiresReview,
+            message.Classification.ClassifiedAt),
+        new EmailProcessingResponseV1(
+            message.ProcessingAttemptCount,
+            message.FailureKind?.ToString(),
+            message.FailureMessage,
+            message.ProcessingRetryable,
+            message.NextAttemptAt,
+            message.AnalysisMetrics is null ? null : new EmailAnalysisMetricsResponseV1(
+                message.AnalysisMetrics.ProviderId,
+                message.AnalysisMetrics.Model,
+                message.AnalysisMetrics.DurationMilliseconds,
+                message.AnalysisMetrics.InputTokens,
+                message.AnalysisMetrics.CachedInputTokens,
+                message.AnalysisMetrics.OutputTokens,
+                message.AnalysisMetrics.EstimatedCostUsd)));
 }

@@ -15,6 +15,10 @@ public sealed class PostgresCollection : ICollectionFixture<PostgresFixture>
 
 public sealed class PostgresFixture : IAsyncLifetime
 {
+    private const long MigrationLockId = 824_111_177;
+    private string adminConnectionString = string.Empty;
+    private string schemaName = string.Empty;
+
     public string ConnectionString { get; private set; } = string.Empty;
 
     public async Task InitializeAsync()
@@ -30,14 +34,44 @@ public sealed class PostgresFixture : IAsyncLifetime
             !connection.Database.EndsWith("_test", StringComparison.OrdinalIgnoreCase))
             throw new InvalidOperationException("PostgreSQL integration tests require a dedicated database name ending in '_test'.");
 
-        ConnectionString = connection.ConnectionString;
-        await using var context = CreateContext();
-        await context.Database.MigrateAsync();
+        adminConnectionString = connection.ConnectionString;
+        schemaName = $"smartinbox_it_{Guid.NewGuid():N}";
+        await using var migrationLock = new NpgsqlConnection(adminConnectionString);
+        await migrationLock.OpenAsync();
+        await using (var command = new NpgsqlCommand("SELECT pg_advisory_lock(@lockId)", migrationLock))
+        {
+            command.Parameters.AddWithValue("lockId", MigrationLockId);
+            await command.ExecuteNonQueryAsync();
+        }
+        try
+        {
+            await using (var command = new NpgsqlCommand($"CREATE SCHEMA \"{schemaName}\"", migrationLock))
+                await command.ExecuteNonQueryAsync();
+
+            connection.SearchPath = schemaName;
+            ConnectionString = connection.ConnectionString;
+            await using var context = CreateContext();
+            await context.Database.MigrateAsync();
+        }
+        finally
+        {
+            await using var command = new NpgsqlCommand("SELECT pg_advisory_unlock(@lockId)", migrationLock);
+            command.Parameters.AddWithValue("lockId", MigrationLockId);
+            await command.ExecuteNonQueryAsync();
+        }
     }
 
     public AppDbContext CreateContext() => new(new DbContextOptionsBuilder<AppDbContext>()
-        .UseNpgsql(ConnectionString, options => options.MigrationsAssembly(typeof(AppDbContext).Assembly.FullName))
+        .UseNpgsql(ConnectionString, options => options
+            .MigrationsAssembly(typeof(AppDbContext).Assembly.FullName)
+            .MigrationsHistoryTable("__EFMigrationsHistory", schemaName))
         .Options);
+
+    public async Task ResetAsync()
+    {
+        await using var context = CreateContext();
+        await context.Database.ExecuteSqlRawAsync("TRUNCATE TABLE email_classifications, inbound_messages CASCADE");
+    }
 
     public ServiceProvider CreateServiceProvider()
     {
@@ -57,5 +91,28 @@ public sealed class PostgresFixture : IAsyncLifetime
         });
     }
 
-    public Task DisposeAsync() => Task.CompletedTask;
+    public async Task DisposeAsync()
+    {
+        if (string.IsNullOrEmpty(schemaName))
+            return;
+
+        await using var migrationLock = new NpgsqlConnection(adminConnectionString);
+        await migrationLock.OpenAsync();
+        await using (var command = new NpgsqlCommand("SELECT pg_advisory_lock(@lockId)", migrationLock))
+        {
+            command.Parameters.AddWithValue("lockId", MigrationLockId);
+            await command.ExecuteNonQueryAsync();
+        }
+        try
+        {
+            await using var command = new NpgsqlCommand($"DROP SCHEMA IF EXISTS \"{schemaName}\" CASCADE", migrationLock);
+            await command.ExecuteNonQueryAsync();
+        }
+        finally
+        {
+            await using var command = new NpgsqlCommand("SELECT pg_advisory_unlock(@lockId)", migrationLock);
+            command.Parameters.AddWithValue("lockId", MigrationLockId);
+            await command.ExecuteNonQueryAsync();
+        }
+    }
 }

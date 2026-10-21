@@ -1,23 +1,23 @@
 # Roadmap
 
-The following phases are proposals and have not been implemented.
+## Phase 1 — Email ingestion and persistence
 
-## Phase 2 — Assisted classification
+Implemented: normalized message ingestion, PostgreSQL persistence, idempotency, protected versioned API, and real PostgreSQL concurrency coverage.
 
-- Define categories, structured fields, confidence criteria, and recoverable errors.
-- Add a classification use case and provider contract when there is a concrete need.
-- Test with a synthetic corpus and measure quality; do not automate actions from an unvalidated response.
+## Phase 2 — AI-assisted classification
+
+Implemented locally: optional background classification for persisted messages, one-to-one result persistence, English/Spanish structured extraction, deterministic validation and review reasons, bounded retries, lease recovery, OpenAI Responses integration, and a 31-case synthetic evaluation harness using fixed fake candidates. The worker is disabled by default. No live model evaluation or customer email processing has been performed.
 
 ## Phase 3 — Human review and drafts
 
-- Add a review queue and a draft associated with each message.
-- Allow proposals to be approved, edited, or discarded with identity and audit records.
+- Add a review queue and draft/work item only after defining ownership and retention.
+- Record reviewer identity, decisions, edits, and audit history.
 - Keep sending outside the workflow until permissions and approval policy are agreed.
 
 ## Phase 4 — Integrations
 
-- Add an n8n integration and email connectors with least-privilege permissions.
-- Establish webhook verification, retries, rate limits, and traceability.
+- Add email connectors only with least-privilege permissions and verified webhook handling.
+- Establish connector retries, rate limits, and traceability.
 - Do not persist provider tokens without an encryption and rotation plan.
 
 ## Phase 5 — Safe operations

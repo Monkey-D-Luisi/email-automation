@@ -14,6 +14,30 @@ public interface IInboundMessageRepository
         int pageNumber,
         int pageSize,
         CancellationToken cancellationToken = default);
+
+    Task<InboundMessageProcessingClaim?> ClaimNextForProcessingAsync(
+        Guid leaseOwner,
+        DateTimeOffset now,
+        TimeSpan leaseDuration,
+        int maxAttempts,
+        CancellationToken cancellationToken = default);
+
+    Task<bool> CompleteProcessingAsync(
+        Guid id,
+        Guid leaseOwner,
+        EmailClassification classification,
+        EmailAnalysisMetrics metrics,
+        CancellationToken cancellationToken = default);
+
+    Task<bool> FailProcessingAsync(
+        Guid id,
+        Guid leaseOwner,
+        ProcessingFailureKind failureKind,
+        string safeMessage,
+        bool retryable,
+        DateTimeOffset? nextAttemptAt,
+        EmailAnalysisMetrics? metrics,
+        CancellationToken cancellationToken = default);
 }
 
 public sealed record AddInboundMessageResult(InboundMessage Message, bool Created);
@@ -23,3 +47,5 @@ public sealed record InboundMessagePage(
     int PageNumber,
     int PageSize,
     long TotalCount);
+
+public sealed record InboundMessageProcessingClaim(InboundMessage Message, Guid LeaseOwner);

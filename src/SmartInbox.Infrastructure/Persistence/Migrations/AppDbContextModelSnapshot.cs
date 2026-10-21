@@ -22,6 +22,69 @@ namespace SmartInbox.Infrastructure.Persistence.Migrations
 
             NpgsqlModelBuilderExtensions.UseIdentityByDefaultColumns(modelBuilder);
 
+            modelBuilder.Entity("SmartInbox.Infrastructure.Persistence.EmailClassificationRecord", b =>
+                {
+                    b.Property<Guid>("MessageId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("Category")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)");
+
+                    b.Property<DateTimeOffset>("ClassifiedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("FactsJson")
+                        .IsRequired()
+                        .HasColumnType("jsonb");
+
+                    b.Property<string>("Language")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)");
+
+                    b.Property<string>("MissingInformationJson")
+                        .IsRequired()
+                        .HasColumnType("jsonb");
+
+                    b.Property<string>("Priority")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)");
+
+                    b.Property<bool>("RequiresReview")
+                        .HasColumnType("boolean");
+
+                    b.Property<string>("ReviewReasonsJson")
+                        .IsRequired()
+                        .HasColumnType("jsonb");
+
+                    b.Property<string>("Summary")
+                        .IsRequired()
+                        .HasMaxLength(1000)
+                        .HasColumnType("character varying(1000)");
+
+                    b.Property<string>("UncertaintyReasonsJson")
+                        .IsRequired()
+                        .HasColumnType("jsonb");
+
+                    b.Property<string>("WarningsJson")
+                        .IsRequired()
+                        .HasColumnType("jsonb");
+
+                    b.HasKey("MessageId");
+
+                    b.ToTable("email_classifications", null, t =>
+                        {
+                            t.HasCheckConstraint("ck_email_classifications_category", "\"Category\" IN ('SalesInquiry', 'SupportRequest', 'BillingDocument', 'GeneralInquiry', 'Irrelevant', 'Unknown')");
+
+                            t.HasCheckConstraint("ck_email_classifications_priority", "\"Priority\" IN ('Low', 'Normal', 'High', 'Urgent')");
+
+                            t.HasCheckConstraint("ck_email_classifications_review", "\"RequiresReview\" = (jsonb_array_length(\"ReviewReasonsJson\") > 0)");
+                        });
+                });
+
             modelBuilder.Entity("SmartInbox.Infrastructure.Persistence.InboundMessageRecord", b =>
                 {
                     b.Property<Guid>("Id")
@@ -51,13 +114,62 @@ namespace SmartInbox.Infrastructure.Persistence.Migrations
                         .HasMaxLength(512)
                         .HasColumnType("character varying(512)");
 
+                    b.Property<string>("FailureKind")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<string>("FailureMessage")
+                        .HasMaxLength(250)
+                        .HasColumnType("character varying(250)");
+
                     b.Property<DateTimeOffset>("ImportedAt")
                         .HasColumnType("timestamp with time zone");
+
+                    b.Property<int?>("LastCachedInputTokens")
+                        .HasColumnType("integer");
+
+                    b.Property<long?>("LastDurationMilliseconds")
+                        .HasColumnType("bigint");
+
+                    b.Property<decimal?>("LastEstimatedCostUsd")
+                        .HasPrecision(18, 8)
+                        .HasColumnType("numeric(18,8)");
+
+                    b.Property<int?>("LastInputTokens")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("LastModel")
+                        .HasMaxLength(128)
+                        .HasColumnType("character varying(128)");
+
+                    b.Property<int?>("LastOutputTokens")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("LastProviderId")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
 
                     b.Property<string>("MailboxId")
                         .IsRequired()
                         .HasMaxLength(256)
                         .HasColumnType("character varying(256)");
+
+                    b.Property<DateTimeOffset?>("NextAttemptAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<int>("ProcessingAttemptCount")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer")
+                        .HasDefaultValue(0);
+
+                    b.Property<DateTimeOffset?>("ProcessingLeaseExpiresAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid?>("ProcessingLeaseOwner")
+                        .HasColumnType("uuid");
+
+                    b.Property<bool>("ProcessingRetryable")
+                        .HasColumnType("boolean");
 
                     b.Property<DateTimeOffset>("ReceivedAt")
                         .HasColumnType("timestamp with time zone");
@@ -94,12 +206,37 @@ namespace SmartInbox.Infrastructure.Persistence.Migrations
                         .IsUnique()
                         .HasDatabaseName("ux_inbound_messages_source_mailbox_external_message_id");
 
+                    b.HasIndex("Status", "NextAttemptAt", "ProcessingLeaseExpiresAt")
+                        .HasDatabaseName("ix_inbound_messages_processing_queue");
+
                     b.ToTable("inbound_messages", null, t =>
                         {
                             t.HasCheckConstraint("ck_inbound_messages_content_fingerprint_length", "char_length(\"ContentFingerprint\") = 64");
 
+                            t.HasCheckConstraint("ck_inbound_messages_failure_state", "(\"Status\" = 'Failed' AND \"FailureKind\" IS NOT NULL AND \"FailureMessage\" IS NOT NULL AND ((\"ProcessingRetryable\" AND \"NextAttemptAt\" IS NOT NULL) OR (NOT \"ProcessingRetryable\" AND \"NextAttemptAt\" IS NULL))) OR (\"Status\" <> 'Failed' AND \"FailureKind\" IS NULL AND \"FailureMessage\" IS NULL AND NOT \"ProcessingRetryable\" AND \"NextAttemptAt\" IS NULL)");
+
+                            t.HasCheckConstraint("ck_inbound_messages_lease_state", "(\"Status\" = 'Processing' AND \"ProcessingLeaseOwner\" IS NOT NULL AND \"ProcessingLeaseExpiresAt\" IS NOT NULL) OR (\"Status\" <> 'Processing' AND \"ProcessingLeaseOwner\" IS NULL AND \"ProcessingLeaseExpiresAt\" IS NULL)");
+
+                            t.HasCheckConstraint("ck_inbound_messages_processing_attempt_count", "\"ProcessingAttemptCount\" >= 0");
+
                             t.HasCheckConstraint("ck_inbound_messages_status", "\"Status\" IN ('Received', 'Processing', 'Processed', 'Failed')");
                         });
+                });
+
+            modelBuilder.Entity("SmartInbox.Infrastructure.Persistence.EmailClassificationRecord", b =>
+                {
+                    b.HasOne("SmartInbox.Infrastructure.Persistence.InboundMessageRecord", "Message")
+                        .WithOne("Classification")
+                        .HasForeignKey("SmartInbox.Infrastructure.Persistence.EmailClassificationRecord", "MessageId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Message");
+                });
+
+            modelBuilder.Entity("SmartInbox.Infrastructure.Persistence.InboundMessageRecord", b =>
+                {
+                    b.Navigation("Classification");
                 });
 #pragma warning restore 612, 618
         }

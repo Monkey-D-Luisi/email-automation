@@ -13,6 +13,9 @@ internal sealed class InboundMessageRecordConfiguration : IEntityTypeConfigurati
         {
             table.HasCheckConstraint("ck_inbound_messages_status", "\"Status\" IN ('Received', 'Processing', 'Processed', 'Failed')");
             table.HasCheckConstraint("ck_inbound_messages_content_fingerprint_length", "char_length(\"ContentFingerprint\") = 64");
+            table.HasCheckConstraint("ck_inbound_messages_processing_attempt_count", "\"ProcessingAttemptCount\" >= 0");
+            table.HasCheckConstraint("ck_inbound_messages_lease_state", "(\"Status\" = 'Processing' AND \"ProcessingLeaseOwner\" IS NOT NULL AND \"ProcessingLeaseExpiresAt\" IS NOT NULL) OR (\"Status\" <> 'Processing' AND \"ProcessingLeaseOwner\" IS NULL AND \"ProcessingLeaseExpiresAt\" IS NULL)");
+            table.HasCheckConstraint("ck_inbound_messages_failure_state", "(\"Status\" = 'Failed' AND \"FailureKind\" IS NOT NULL AND \"FailureMessage\" IS NOT NULL AND ((\"ProcessingRetryable\" AND \"NextAttemptAt\" IS NOT NULL) OR (NOT \"ProcessingRetryable\" AND \"NextAttemptAt\" IS NULL))) OR (\"Status\" <> 'Failed' AND \"FailureKind\" IS NULL AND \"FailureMessage\" IS NULL AND NOT \"ProcessingRetryable\" AND \"NextAttemptAt\" IS NULL)");
         });
 
         builder.HasKey(message => message.Id);
@@ -29,10 +32,24 @@ internal sealed class InboundMessageRecordConfiguration : IEntityTypeConfigurati
         builder.Property(message => message.Status).HasMaxLength(32).IsRequired();
         builder.Property(message => message.ContentFingerprint).HasMaxLength(64).IsRequired();
         builder.Property(message => message.AttachmentsJson).HasColumnType("jsonb").IsRequired();
+        builder.Property(message => message.ProcessingAttemptCount).HasDefaultValue(0);
+        builder.Property(message => message.FailureKind).HasMaxLength(64);
+        builder.Property(message => message.FailureMessage).HasMaxLength(250);
+        builder.Property(message => message.NextAttemptAt).HasColumnType("timestamp with time zone");
+        builder.Property(message => message.ProcessingLeaseExpiresAt).HasColumnType("timestamp with time zone");
+        builder.Property(message => message.LastProviderId).HasMaxLength(64);
+        builder.Property(message => message.LastModel).HasMaxLength(128);
+        builder.Property(message => message.LastEstimatedCostUsd).HasPrecision(18, 8);
 
         builder.HasIndex(message => new { message.Source, message.MailboxId, message.ExternalMessageId })
             .IsUnique()
             .HasDatabaseName(IdempotencyIndexName);
         builder.HasIndex(message => message.ImportedAt).HasDatabaseName("ix_inbound_messages_imported_at");
+        builder.HasIndex(message => new { message.Status, message.NextAttemptAt, message.ProcessingLeaseExpiresAt })
+            .HasDatabaseName("ix_inbound_messages_processing_queue");
+        builder.HasOne(message => message.Classification)
+            .WithOne(classification => classification.Message)
+            .HasForeignKey<EmailClassificationRecord>(classification => classification.MessageId)
+            .OnDelete(DeleteBehavior.Cascade);
     }
 }

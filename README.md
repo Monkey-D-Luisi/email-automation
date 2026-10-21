@@ -1,6 +1,6 @@
 # Smart Inbox Automation
 
-Smart Inbox Automation is a local demo for receiving, validating, deduplicating, and querying normalized email messages. This delivery covers Phase 1 only: ingestion and persistence in PostgreSQL. Use synthetic messages only.
+Smart Inbox Automation is a local demo for receiving, validating, deduplicating, and querying normalized email messages. Phase 2 adds optional AI-assisted classification and bounded fact extraction after PostgreSQL persistence. Use synthetic messages only.
 
 ## Architecture
 
@@ -14,7 +14,7 @@ SmartInbox.API -> SmartInbox.Application -> SmartInbox.Domain
                 PostgreSQL
 ```
 
-`Domain` contains the `InboundMessage` aggregate and its invariants. `Application` contains commands, queries, validators, and the repository contract. `Infrastructure` implements the repository, EF Core persistence, and `[IoC]` registration. `API` composes the layers and defines versioned HTTP contracts. No email-provider or AI integration is implemented.
+`Domain` contains the `InboundMessage` aggregate, classification value, and lifecycle invariants. `Application` contains commands, queries, the deterministic classification policy, provider contracts, and processing orchestration. `Infrastructure` implements PostgreSQL persistence, a lease-based background worker, and an OpenAI Responses adapter. `API` composes the layers and defines versioned HTTP contracts. The worker is disabled by default.
 
 The solution contains the eight required projects:
 
@@ -126,11 +126,34 @@ Invoke-WebRequest -Uri 'http://127.0.0.1:5168/api/v1/messages?pageNumber=1&pageS
 
 The API accepts up to 10 attachment metadata entries (external ID, name, MIME type, and size). It does not receive or store file bytes. Unknown JSON fields are rejected, including possible binary content fields.
 
+## Classification lifecycle
+
+When `EmailProcessing:Enabled` is `false` (the default), ingestion and retrieval work without OpenAI credentials or provider calls. To enable local processing, store the key in User Secrets and enable the worker:
+
+```powershell
+dotnet user-secrets set 'OpenAI:ApiKey' '<your-openai-api-key>' --project 'src/SmartInbox.API/SmartInbox.API.csproj'
+dotnet user-secrets set 'EmailAnalysis:Provider' 'openai' --project 'src/SmartInbox.API/SmartInbox.API.csproj'
+dotnet user-secrets set 'OpenAI:Model' 'gpt-6-luna' --project 'src/SmartInbox.API/SmartInbox.API.csproj'
+dotnet user-secrets set 'EmailProcessing:Enabled' 'true' --project 'src/SmartInbox.API/SmartInbox.API.csproj'
+```
+
+Environment variables such as `OpenAI__ApiKey` and `EmailProcessing__Enabled` are also supported. Keep credentials in environment variables or User Secrets; never put a real key in `appsettings.json` or `.env`. Apply the EF migration before enabling processing, then restart the API. The provider ID (`EmailAnalysis:Provider`) and model (`OpenAI:Model`) are separate settings.
+
+The worker claims persisted `Received` messages in PostgreSQL, releases its short transaction before provider I/O, and stores one validated classification per message. The lifecycle is `Received → Processing → Processed/Failed`; due transient failures and expired leases can return to `Processing`. An identical replay returns the existing ID and does not reclassify a completed message. A crash after a provider response but before the database commit can cause that in-flight request to be repeated after lease expiry. `Processed` means a classification was stored; `Classification.RequiresReview` signals a person should inspect an uncertain result. The application never deletes, archives, replies to, or forwards email.
+
+Retrieve the message with the existing authenticated endpoint, `GET /api/v1/messages/{id}`. The response includes processing status, attempt count, safe failure details, available provider metrics, and the classification when complete. All message endpoints still require the service bearer token.
+
+Processing defaults are one worker, three attempts, a two-second idle poll, a 30-second retry delay, a 120-second lease, a 90-second request timeout, and a 40,000-character analysis input cap. Retries are bounded and only apply to transient connectivity, rate-limit, and timeout failures. Authentication, invalid structured output, and unsupported provider/model failures are permanent. An expired final lease is marked `RetryLimitReached`.
+
+The evaluation harness reads 31 fully synthetic cases from `tests/SmartInbox.Application.Tests/EmailAnalysis/synthetic-emails.jsonl`. It covers all categories, English and Spanish, missing and conflicting information, urgency evidence, and prompt-injection text. The deterministic harness supplies fixed fake candidates and checks category and review outcomes; it does not measure model accuracy. A future live model evaluation requires explicit authorization and may incur API charges. No live provider call is part of build or test commands.
+
+OpenAI pricing is not assumed. When token usage and matching model rates are configured under `OpenAI:ModelPricing`, the response records an estimate; otherwise estimated cost stays unknown. Metrics in message retrieval represent the latest provider attempt with available telemetry, and attempt count includes retries.
+
 Ingestion limits are: HTTP body size of 65,536 bytes, body text of 40,000 characters, subject of 998 characters, external IDs of 512 characters, and mailbox ID of 256 characters. Other limits are defined in `InboundMessageLimits` and validated before persistence.
 
 ## Tests, build, and package audit
 
-Integration tests use PostgreSQL on localhost. The connection string must target a dedicated database whose name ends in `_test`; Compose creates `smartinbox_test`. Tests do not delete the database or its rows.
+Integration tests use PostgreSQL on localhost. The connection string must target a dedicated database whose name ends in `_test`; Compose creates `smartinbox_test`. Each test fixture creates and removes its own uniquely named schema inside that database, leaving other schemas untouched.
 
 ```powershell
 $password = ((Get-Content '.env' | Where-Object { $_.StartsWith('SMARTINBOX_DB_PASSWORD=') }) -split '=', 2)[1]
@@ -142,10 +165,10 @@ dotnet list SmartInbox.sln package --vulnerable --include-transitive
 Remove-Item Env:SMARTINBOX_TEST_CONNECTION_STRING
 ```
 
-`dotnet tool restore` installs the pinned `dotnet-ef` version. GitHub Actions runs restore, Release build, unit and PostgreSQL integration tests, and a NuGet package audit. It does not use real credentials or external providers.
+`dotnet tool restore` installs the pinned `dotnet-ef` version. GitHub Actions runs restore, Release build, unit and PostgreSQL integration tests, and a NuGet package audit. It does not use real credentials or external providers. Automated tests use fake provider responses and never call OpenAI.
 
 ## Security and privacy
 
-This application is limited to a local demo with synthetic data. Do not expose it to untrusted networks or process real customer email. Identity and authorization controls, credential rotation, retention and deletion, encryption, and operational controls would be needed before broader use. The email body is stored as plain text in PostgreSQL for this phase's ingestion requirement. Application logs do not include message bodies, recipients, tokens, or payloads.
+This application is limited to a local demo with synthetic data. Do not expose it to untrusted networks or process real customer email. Identity and authorization controls, credential rotation, retention and deletion, encryption, and operational controls would be needed before broader use. The email body is stored as plain text in PostgreSQL. Provider logs include outcome and bounded telemetry only; they omit bodies, sender addresses, prompts, response contents, API keys, and raw provider exception messages.
 
 Original code is distributed under the MIT License; MediatR 12.5.0 retains its Apache 2.0 license. See [LICENSE](LICENSE).

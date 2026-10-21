@@ -1,44 +1,46 @@
-# Handoff — Smart Inbox Automation, Phase 1
+# Handoff — Smart Inbox Automation, Phase 2
 
 ## Status
 
-Phase 1 is implemented in the independent `email-automation` repository. The solution contains the eight planned projects, the `InboundMessage` aggregate, CQRS with MediatR 12.5.0 and FluentValidation, EF Core/Npgsql persistence, a v1 API with service-token authentication, an initial migration, Docker Compose, CI, and documentation.
+Phase 2 adds optional AI-assisted classification to the existing local application. It keeps the Phase 1 ingestion API and PostgreSQL idempotency behavior, adds a bounded domain classification value, an application validation policy, an OpenAI Responses provider, and an opt-in PostgreSQL-backed background worker. No email actions, frontend, external mailbox connectors, or additional AI providers are implemented.
 
-Message ingestion, retrieval, pagination, deduplication, conflicts, and concurrency were verified against PostgreSQL 17. The local API uses User Secrets; development values and `.env` remain outside the repository.
+The intended local branch is `feature/ai-email-classification`. This work has not been pushed and no pull request has been opened. Synthetic data and fake provider responses were used for automated verification. No billable OpenAI requests were made; model/API integration has not been live-verified with an account.
 
-## Verification performed
+## Verification
 
-- `dotnet restore SmartInbox.sln`: succeeded.
+- `dotnet restore SmartInbox.sln`: succeeded; all projects were up to date.
 - `dotnet build SmartInbox.sln --configuration Release --no-restore`: succeeded with 0 warnings and 0 errors.
-- `dotnet test SmartInbox.sln --configuration Release --no-build --no-restore`: **24/24 tests passed**, including API, unit, and PostgreSQL tests using independent contexts.
-- `dotnet list SmartInbox.sln package --vulnerable --include-transitive`: no vulnerable packages were reported by the configured NuGet sources.
-- Docker Compose PostgreSQL 17: container healthy on `127.0.0.1:5432`; `InitialCreate` migration applied to `smartinbox_dev`. Tests ran against `smartinbox_test`.
-- PostgreSQL tests verified the real unique index, concurrent collisions, retries, conflict without overwriting, valid/missing/invalid authentication, and HTTP body limits.
-- Local Kestrel smoke test: `/health` returned 200, an unauthenticated message request returned 401, a new POST returned 202, a repeated POST returned 200 with the same ID, a conflict returned 409, and GET/list returned 200; the original content remained unchanged. Two concurrent POSTs returned 202 and 200 with the same ID, and the list confirmed exactly one persisted row for the message.
+- `dotnet test SmartInbox.sln --configuration Release --no-build --no-restore`: **69/69 passed** — Domain 6, Application 31, Infrastructure 24, API 8. PostgreSQL integration tests ran against local PostgreSQL 17 using isolated schemas.
+- `dotnet list SmartInbox.sln package --vulnerable --include-transitive`: no vulnerable packages reported by the configured NuGet sources.
+- `dotnet ef migrations has-pending-model-changes`: no pending model changes.
+- GitHub-hosted CI and live provider requests: not run.
 
-The configured CI repeats restore, build, all tests with a PostgreSQL service, and NuGet auditing. GitHub Actions has not been run because this repository is not published.
+Integration tests require `SMARTINBOX_TEST_CONNECTION_STRING` to point to a localhost PostgreSQL database whose name ends in `_test`. Each test fixture uses its own isolated schema and drops that schema at fixture shutdown. Tests use fake provider responses and do not require credentials.
 
-## How to continue
+## Local setup and controlled provider evaluation
 
-1. In PowerShell, create `.env` from `.env.example` with a random local value for `SMARTINBOX_DB_PASSWORD`; Compose prepares `smartinbox_dev` and `smartinbox_test`.
-2. Run `docker compose up -d` and store `ConnectionStrings:Database` and `ServiceAuthentication:Token` with `dotnet user-secrets set` for the API project.
-3. Run `dotnet tool restore` and explicitly apply `dotnet ef database update`.
-4. Start `dotnet run --project src/SmartInbox.API/SmartInbox.API.csproj` and try `docs/examples/synthetic-email.json`.
-5. Run the full suite with `SMARTINBOX_TEST_CONNECTION_STRING` pointing to a dedicated database whose name ends in `_test`.
+Start PostgreSQL and configure the database and service token as described in [README.md](../README.md). Apply migrations explicitly before starting the API:
 
-See [README.md](../README.md) for complete PowerShell commands.
+```powershell
+dotnet tool restore
+dotnet ef database update --project 'src/SmartInbox.Infrastructure/SmartInbox.Infrastructure.csproj' --startup-project 'src/SmartInbox.API/SmartInbox.API.csproj'
+```
 
-## Current limitations and risks
+The worker defaults to disabled and the API can ingest and retrieve messages without an OpenAI credential. For a future controlled live evaluation, first confirm the provider and model account availability, then put the key in User Secrets or the process environment, set `EmailAnalysis:Provider=openai`, select the model under `OpenAI:Model`, review the bounded retry/concurrency/timeout limits, and explicitly set `EmailProcessing:Enabled=true`. A protected synthetic message can then be submitted through `POST /api/v1/messages`; poll `GET /api/v1/messages/{id}` for its classification and safe processing state. That evaluation can incur API charges. Do not use real customer email for this demo.
 
-- Email bodies are stored as readable text in PostgreSQL. There is no application-level encryption, retention policy, or automated deletion.
-- MediatR 12.5.0 is retained to meet the Apache 2.0 license requirement; upstream support for major version 12 is not guaranteed, so review this choice before operational use.
-- The shared token does not manage users, mailbox-level permissions, rotation, rate limiting, or access auditing.
-- The demo is for localhost and synthetic data only; it is not suitable for public exposure or real customer email.
-- Attachments contribute normalized metadata only; there is no download, reading, or persistence of attachment bytes.
-- Gmail/Outlook, n8n, AI, drafts, sending, and a frontend are not implemented.
-- The `document-processor` repository was available locally and informed the layer and IoC patterns. The requested `converso` URL returned 404, and no local copy was available, so no decisions were based on that repository.
-- No repository was published and hosted CI was not run.
+The automated evaluation harness in `tests/SmartInbox.Application.Tests/EmailAnalysis/synthetic-emails.jsonl` contains 31 synthetic cases. It applies deterministic validation to fixed candidate outputs; it is not a live model quality benchmark.
 
-## Preparation for Phase 2
+## Design and operational limits
 
-Define the classification use case, data policy, and retention before introducing an AI provider. Add a contract and implementation only when the use case is clear. Keep message bodies and prompts out of logs, use synthetic email for testing, and retain human approval for any future action.
+- Each message has at most one current classification. A retryable failure stores its kind, safe message, next attempt time, and attempt count.
+- PostgreSQL claims work with `FOR UPDATE SKIP LOCKED` and an expiring owner lease. Completion requires the current owner, preventing a reclaimed message's stale worker from overwriting the result.
+- Provider I/O occurs outside database transactions. Completion writes the classification and processed state atomically.
+- Transient connectivity, rate limits, and timeouts retry up to the configured limit. Permanent provider/authentication/schema errors stop without automatic retries.
+- Available metrics preserve the latest provider call telemetry and total attempt count; the database does not retain a full per-attempt history. Estimated cost remains unknown unless model pricing is configured.
+- Processing is at-least-once around external provider I/O. A crash after an OpenAI response but before the database commit can repeat that in-flight request after lease expiry; committed classifications and duplicate submissions do not trigger another analysis.
+- Email content is stored as plain text. The shared service token does not provide user identity, mailbox-level authorization, rotation, or audit history.
+- The OpenAI SDK adapter is covered by fake-client tests. Credentials, model entitlement, network connectivity, and live structured output have not been tested.
+
+## Preparation for Phase 3
+
+Keep classification immutable once processed. Phase 3 can add a human review queue and proposed drafts or work items, with explicit reviewer identity, approval state, and audit history. No sending, forwarding, CRM write, or other external action should be triggered by a classification alone.

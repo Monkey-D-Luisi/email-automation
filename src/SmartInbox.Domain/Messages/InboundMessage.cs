@@ -21,6 +21,13 @@ public sealed class InboundMessage
     public InboundMessageStatus Status { get; private set; }
     public string ContentFingerprint { get; private set; } = string.Empty;
     public IReadOnlyList<AttachmentMetadata> Attachments { get; private set; } = [];
+    public EmailClassification? Classification { get; private set; }
+    public EmailAnalysisMetrics? AnalysisMetrics { get; private set; }
+    public int ProcessingAttemptCount { get; private set; }
+    public ProcessingFailureKind? FailureKind { get; private set; }
+    public string? FailureMessage { get; private set; }
+    public bool ProcessingRetryable { get; private set; }
+    public DateTimeOffset? NextAttemptAt { get; private set; }
 
     private InboundMessage() { }
 
@@ -87,7 +94,6 @@ public sealed class InboundMessage
         var allowed = (Status, nextStatus) switch
         {
             (InboundMessageStatus.Received, InboundMessageStatus.Processing) => true,
-            (InboundMessageStatus.Processing, InboundMessageStatus.Processed or InboundMessageStatus.Failed) => true,
             (InboundMessageStatus.Failed, InboundMessageStatus.Processing) => true,
             _ => false,
         };
@@ -95,7 +101,61 @@ public sealed class InboundMessage
         if (!allowed)
             throw new InvalidOperationException($"Cannot transition an inbound message from {Status} to {nextStatus}.");
 
+        if (nextStatus == InboundMessageStatus.Processing)
+        {
+            ProcessingAttemptCount++;
+            FailureKind = null;
+            FailureMessage = null;
+            ProcessingRetryable = false;
+            NextAttemptAt = null;
+        }
         Status = nextStatus;
+    }
+
+    public void CompleteProcessing(EmailClassification classification, EmailAnalysisMetrics metrics)
+    {
+        ArgumentNullException.ThrowIfNull(classification);
+        ArgumentNullException.ThrowIfNull(metrics);
+        if (Status != InboundMessageStatus.Processing)
+            throw new InvalidOperationException("Only a processing message can be completed.");
+        if (Classification is not null)
+            throw new InvalidOperationException("A completed classification cannot be replaced.");
+        ValidateMetrics(metrics);
+
+        Classification = classification;
+        AnalysisMetrics = metrics;
+        FailureKind = null;
+        FailureMessage = null;
+        ProcessingRetryable = false;
+        NextAttemptAt = null;
+        Status = InboundMessageStatus.Processed;
+    }
+
+    public void FailProcessing(
+        ProcessingFailureKind failureKind,
+        string safeMessage,
+        bool retryable,
+        DateTimeOffset? nextAttemptAt,
+        EmailAnalysisMetrics? metrics = null)
+    {
+        if (Status != InboundMessageStatus.Processing)
+            throw new InvalidOperationException("Only a processing message can fail.");
+        if (!Enum.IsDefined(failureKind))
+            throw new ArgumentOutOfRangeException(nameof(failureKind));
+        if (string.IsNullOrWhiteSpace(safeMessage) || safeMessage.Length > InboundMessageLimits.ProcessingFailureMessage)
+            throw new ArgumentException("The processing failure message is invalid.", nameof(safeMessage));
+        if (retryable != (nextAttemptAt is not null))
+            throw new ArgumentException("A retryable failure must have a retry time.", nameof(nextAttemptAt));
+        if (metrics is not null)
+            ValidateMetrics(metrics);
+
+        FailureKind = failureKind;
+        FailureMessage = safeMessage.Trim();
+        ProcessingRetryable = retryable;
+        NextAttemptAt = nextAttemptAt?.ToUniversalTime();
+        if (metrics is not null)
+            AnalysisMetrics = metrics;
+        Status = InboundMessageStatus.Failed;
     }
 
     public static InboundMessage Restore(
@@ -112,7 +172,14 @@ public sealed class InboundMessage
         DateTimeOffset importedAt,
         InboundMessageStatus status,
         string contentFingerprint,
-        IEnumerable<AttachmentMetadata> attachments)
+        IEnumerable<AttachmentMetadata> attachments,
+        EmailClassification? classification = null,
+        EmailAnalysisMetrics? analysisMetrics = null,
+        int processingAttemptCount = 0,
+        ProcessingFailureKind? failureKind = null,
+        string? failureMessage = null,
+        bool processingRetryable = false,
+        DateTimeOffset? nextAttemptAt = null)
     {
         if (id == Guid.Empty)
             throw new ArgumentException("A persisted message ID is required.", nameof(id));
@@ -120,6 +187,22 @@ public sealed class InboundMessage
             throw new ArgumentOutOfRangeException(nameof(status));
         if (contentFingerprint.Length != 64 || !contentFingerprint.All(Uri.IsHexDigit))
             throw new ArgumentException("A persisted content fingerprint must be a SHA-256 digest.", nameof(contentFingerprint));
+        if (processingAttemptCount < 0)
+            throw new ArgumentOutOfRangeException(nameof(processingAttemptCount));
+        if (failureKind is not null && !Enum.IsDefined(failureKind.Value))
+            throw new ArgumentOutOfRangeException(nameof(failureKind));
+        if (processingRetryable != (nextAttemptAt is not null))
+            throw new ArgumentException("Persisted retry state is inconsistent.", nameof(nextAttemptAt));
+        if ((status == InboundMessageStatus.Processed) != (classification is not null))
+            throw new ArgumentException("A processed message must have exactly one classification.", nameof(classification));
+        if (status == InboundMessageStatus.Failed && (failureKind is null || string.IsNullOrWhiteSpace(failureMessage)))
+            throw new ArgumentException("A failed message must have safe failure information.", nameof(failureMessage));
+        if (status != InboundMessageStatus.Failed && (failureKind is not null || failureMessage is not null || processingRetryable))
+            throw new ArgumentException("Only failed messages can have failure information.", nameof(failureKind));
+        if (status == InboundMessageStatus.Processed && analysisMetrics is null)
+            throw new ArgumentException("A processed message must have analysis metrics.", nameof(analysisMetrics));
+        if (analysisMetrics is not null)
+            ValidateMetrics(analysisMetrics);
 
         var message = Receive(
             source, mailboxId, externalMessageId, externalThreadId, senderEmail, senderName,
@@ -127,7 +210,25 @@ public sealed class InboundMessage
         message.Id = id;
         message.Status = status;
         message.ContentFingerprint = contentFingerprint.ToLowerInvariant();
+        message.Classification = classification;
+        message.AnalysisMetrics = analysisMetrics;
+        message.ProcessingAttemptCount = processingAttemptCount;
+        message.FailureKind = failureKind;
+        message.FailureMessage = failureMessage;
+        message.ProcessingRetryable = processingRetryable;
+        message.NextAttemptAt = nextAttemptAt?.ToUniversalTime();
         return message;
+    }
+
+    private static void ValidateMetrics(EmailAnalysisMetrics metrics)
+    {
+        if (string.IsNullOrWhiteSpace(metrics.ProviderId) || metrics.ProviderId.Length > 64 ||
+            string.IsNullOrWhiteSpace(metrics.Model) || metrics.Model.Length > 128 ||
+            metrics.DurationMilliseconds < 0 || metrics.InputTokens < 0 || metrics.CachedInputTokens < 0 ||
+            metrics.OutputTokens < 0 || metrics.EstimatedCostUsd < 0)
+            throw new ArgumentException("The processing metrics are invalid.", nameof(metrics));
+        if (metrics.InputTokens is not null && metrics.CachedInputTokens > metrics.InputTokens)
+            throw new ArgumentException("Cached token count cannot exceed the input token count.", nameof(metrics));
     }
 
     private static string CreateFingerprint(
