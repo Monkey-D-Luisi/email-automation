@@ -1,49 +1,49 @@
-# Arquitectura
+# Architecture
 
-## Capas y dependencias
+## Layers and dependencies
 
-- `SmartInbox.Domain`: agregado `InboundMessage`, estado, transiciones, metadatos de adjuntos y límites del dominio. Solo depende de .NET.
-- `SmartInbox.Application`: comandos, consultas, validadores FluentValidation, comportamiento de validación, `TimeProvider` y contrato `IInboundMessageRepository`.
-- `SmartInbox.Infrastructure`: registros EF Core, `AppDbContext`, migraciones PostgreSQL, repositorio y escaneo validado `[IoC]`.
-- `SmartInbox.API`: composición, contratos v1, token Bearer, límites HTTP, `ProblemDetails` y endpoints Minimal API.
+- `SmartInbox.Domain`: the `InboundMessage` aggregate, status, transitions, attachment metadata, and domain limits. It depends only on .NET.
+- `SmartInbox.Application`: commands, queries, FluentValidation validators, validation behavior, `TimeProvider`, and the `IInboundMessageRepository` contract.
+- `SmartInbox.Infrastructure`: EF Core configurations, `AppDbContext`, PostgreSQL migrations, repository, and validated `[IoC]` scanning.
+- `SmartInbox.API`: composition, v1 contracts, bearer token authentication, HTTP limits, `ProblemDetails`, and Minimal API endpoints.
 
-Application no depende de Infrastructure. La API es el composition root y referencia Application e Infrastructure. El dominio no conoce HTTP ni EF Core.
+Application does not depend on Infrastructure. The API is the composition root and references Application and Infrastructure. The domain has no dependency on HTTP or EF Core.
 
-## Agregado y huella
+## Aggregate and fingerprint
 
-`InboundMessage.Receive` crea el estado inicial `Received`, toma `ImportedAt` de `TimeProvider` y convierte ambas fechas a UTC. `Source` se recorta y pasa a minúsculas; `MailboxId`, `ExternalMessageId` y `ExternalThreadId` conservan su capitalización porque son IDs externos opacos. El cuerpo y el asunto se conservan sin reescritura. Los campos opcionales vacíos se convierten en `null`; el tipo MIME se recorta y pasa a minúsculas.
+`InboundMessage.Receive` creates the initial `Received` status, obtains `ImportedAt` from `TimeProvider`, and converts both timestamps to UTC. `Source` is trimmed and lowercased; `MailboxId`, `ExternalMessageId`, and `ExternalThreadId` preserve their casing because they are opaque external IDs. The body and subject are preserved without rewriting. Empty optional fields become `null`; MIME types are trimmed and lowercased.
 
-La huella SHA-256 se calcula sobre una representación JSON determinista de `Source`, IDs, remitente, asunto, cuerpo, `ReceivedAt` en UTC y metadatos de adjuntos. No incluye ID interno, estado ni fecha de importación. Así, una repetición del mismo mensaje conserva su huella aunque llegue en otra ejecución.
+The SHA-256 fingerprint is calculated from a deterministic JSON representation of `Source`, IDs, sender, subject, body, UTC `ReceivedAt`, and attachment metadata. It excludes the internal ID, status, and import time. Thus, a repeated message retains the same fingerprint when it arrives in a later run.
 
-El estado admite `Received -> Processing -> Processed/Failed` y `Failed -> Processing`. No hay procesador, clasificación, borradores ni agregados de acciones en esta fase.
+The status flow allows `Received -> Processing -> Processed/Failed` and `Failed -> Processing`. There is no processor, classification, draft, or action aggregate in this phase.
 
-## Idempotencia y transacciones
+## Idempotency and transactions
 
-PostgreSQL impone el índice único `ux_inbound_messages_source_mailbox_external_message_id` sobre `(Source, MailboxId, ExternalMessageId)`. La aplicación no depende de una consulta previa.
+PostgreSQL enforces the unique index `ux_inbound_messages_source_mailbox_external_message_id` on `(Source, MailboxId, ExternalMessageId)`. The application does not depend on a prior lookup.
 
-1. El repositorio intenta insertar el mensaje.
-2. Si PostgreSQL confirma la escritura, se responde `202 Accepted`.
-3. Si PostgreSQL devuelve `23505` para el índice de idempotencia, el repositorio separa la entidad fallida y consulta el registro persistido.
-4. Si el registro existe y la huella coincide, se devuelve su ID con `200 OK`.
-5. Si existe pero la huella difiere, la aplicación genera `409 Conflict`. No se actualiza la fila.
-6. Si la colisión no corresponde al índice esperado o el registro no aparece después de la colisión, el error se propaga al manejador de excepciones.
+1. The repository attempts to insert the message.
+2. If PostgreSQL commits the write, the API returns `202 Accepted`.
+3. If PostgreSQL returns `23505` for the idempotency index, the repository detaches the failed entity and queries the persisted record.
+4. If the record exists and the fingerprint matches, the API returns its ID with `200 OK`.
+5. If the record exists but the fingerprint differs, the application returns `409 Conflict`. The row is not updated.
+6. If the collision is unrelated to the expected index or the record cannot be found after the collision, the error propagates to the exception handler.
 
-La prueba concurrente usa dos scopes y `AppDbContext` independientes contra PostgreSQL. Otra prueba inserta directamente dos filas para verificar que el propio índice de PostgreSQL rechaza la segunda.
+The concurrency test uses two independent scopes and `AppDbContext` instances against PostgreSQL. Another test inserts two rows directly to verify that PostgreSQL's unique index rejects the second row.
 
-## Persistencia
+## Persistence
 
-La migración inicial crea `inbound_messages`, restricciones de estado y huella, e índices de idempotencia y fecha. Las fechas son `timestamp with time zone`; el repositorio solo escribe `DateTimeOffset` en UTC. Los metadatos normalizados de adjuntos se guardan en `jsonb`; nunca hay una columna para bytes de archivo.
+The initial migration creates `inbound_messages`, status and fingerprint constraints, and idempotency and date indexes. Timestamps use `timestamp with time zone`; the repository writes only UTC `DateTimeOffset` values. Normalized attachment metadata is stored as `jsonb`; there is no column for file bytes.
 
-Las migraciones se aplican explícitamente con `dotnet ef database update`. Ningún entorno ejecuta migraciones implícitas durante el arranque de la API.
+Migrations are applied explicitly with `dotnet ef database update`. No environment runs implicit migrations when the API starts.
 
-## API y seguridad
+## API and security
 
-- `POST /api/v1/messages`, `GET /api/v1/messages/{id}` y `GET /api/v1/messages` exigen un token Bearer configurado fuera del repositorio.
-- El token requiere al menos 32 caracteres; la comparación se realiza con hashes SHA-256 y comparación de tiempo constante.
-- `GET /health` no requiere token y comprueba la conexión a PostgreSQL.
-- El cuerpo HTTP se limita a 65 536 bytes. Los campos con límite de caracteres y la paginación se validan en Application.
-- Se rechazan propiedades JSON desconocidas para no aceptar silenciosamente campos binarios no soportados.
-- Validation, conflicto, ausencia e imprevistos producen respuestas estables. Las excepciones internas y el mensaje de la excepción no se devuelven al cliente.
-- Los logs de aplicación registran el tipo de una excepción imprevista, no el payload o el mensaje de la excepción. No se habilita el logging de valores sensibles de EF Core.
+- `POST /api/v1/messages`, `GET /api/v1/messages/{id}`, and `GET /api/v1/messages` require a bearer token configured outside the repository.
+- The token must be at least 32 characters long; comparison uses SHA-256 hashes and a fixed-time comparison.
+- `GET /health` does not require a token and checks PostgreSQL connectivity.
+- HTTP request bodies are limited to 65,536 bytes. Character-limited fields and pagination are validated in Application.
+- Unknown JSON properties are rejected so unsupported binary fields cannot be silently accepted.
+- Validation errors, conflicts, missing records, and unexpected failures produce stable responses. Internal exceptions and exception messages are not returned to clients.
+- Application logs record the type of an unexpected exception, not its payload or message. EF Core sensitive-data logging is not enabled.
 
-El token no sustituye identidad de usuario, autorización por buzón, rotación, auditoría ni controles contra abuso. El sistema sigue siendo una demo privada local.
+The token does not provide user identity, mailbox-level authorization, rotation, auditing, or abuse controls. This remains a private local demo.

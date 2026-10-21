@@ -1,27 +1,27 @@
 # Roadmap
 
-Las fases siguientes son propuestas de trabajo y no están implementadas.
+The following phases are proposals and have not been implemented.
 
-## Fase 2 — Clasificación asistida
+## Phase 2 — Assisted classification
 
-- Definir categorías, campos estructurados, criterios de confianza y errores recuperables.
-- Añadir un caso de uso de clasificación y un contrato de proveedor cuando exista una necesidad concreta.
-- Probar con corpus sintético y medir calidad; no automatizar acciones a partir de una respuesta no validada.
+- Define categories, structured fields, confidence criteria, and recoverable errors.
+- Add a classification use case and provider contract when there is a concrete need.
+- Test with a synthetic corpus and measure quality; do not automate actions from an unvalidated response.
 
-## Fase 3 — Revisión humana y borradores
+## Phase 3 — Human review and drafts
 
-- Incorporar una cola de revisión y un borrador asociado al mensaje.
-- Permitir aprobar, editar o descartar propuestas con identidad y auditoría.
-- Mantener el envío fuera del flujo hasta acordar permisos y política de aprobación.
+- Add a review queue and a draft associated with each message.
+- Allow proposals to be approved, edited, or discarded with identity and audit records.
+- Keep sending outside the workflow until permissions and approval policy are agreed.
 
-## Fase 4 — Integraciones
+## Phase 4 — Integrations
 
-- Añadir una integración de n8n y conectores de correo con permisos mínimos.
-- Establecer verificación de webhooks, reintentos, límites de frecuencia y trazabilidad.
-- Evitar persistir tokens de proveedores sin un plan de cifrado y rotación.
+- Add an n8n integration and email connectors with least-privilege permissions.
+- Establish webhook verification, retries, rate limits, and traceability.
+- Do not persist provider tokens without an encryption and rotation plan.
 
-## Fase 5 — Operación segura
+## Phase 5 — Safe operations
 
-- Diseñar autenticación y autorización por buzón, retención/borrado, cifrado, auditoría y monitorización.
-- Incorporar pruebas de carga, recuperación ante fallos, copias de seguridad y controles de despliegue.
-- Revisar el modelo de amenazas y cumplimiento antes de procesar datos reales o exponer servicios públicamente.
+- Design mailbox-level authentication and authorization, retention and deletion, encryption, auditing, and monitoring.
+- Add load tests, failure recovery, backups, and deployment controls.
+- Review the threat model and compliance requirements before processing real data or exposing services publicly.

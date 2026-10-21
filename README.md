@@ -1,10 +1,10 @@
 # Smart Inbox Automation
 
-Smart Inbox Automation es una demo local para recibir, validar, deduplicar y consultar correos normalizados. Esta entrega cubre exclusivamente la fase 1: ingestión y persistencia en PostgreSQL. Solo se deben usar mensajes sintéticos.
+Smart Inbox Automation is a local demo for receiving, validating, deduplicating, and querying normalized email messages. This delivery covers Phase 1 only: ingestion and persistence in PostgreSQL. Use synthetic messages only.
 
-## Arquitectura
+## Architecture
 
-La solución usa .NET 10, ASP.NET Core Minimal API, CQRS con MediatR 12.5.0, FluentValidation, EF Core y PostgreSQL.
+The solution uses .NET 10, ASP.NET Core Minimal API, CQRS with MediatR 12.5.0, FluentValidation, EF Core, and PostgreSQL.
 
 ```text
 SmartInbox.API -> SmartInbox.Application -> SmartInbox.Domain
@@ -14,24 +14,24 @@ SmartInbox.API -> SmartInbox.Application -> SmartInbox.Domain
                 PostgreSQL
 ```
 
-`Domain` contiene el agregado `InboundMessage` y sus invariantes. `Application` contiene comandos, consultas, validadores y el contrato del repositorio. `Infrastructure` implementa el repositorio, EF Core y el registro `[IoC]`. `API` compone las capas y define los contratos HTTP versionados. Ninguna integración de correo o IA está implementada.
+`Domain` contains the `InboundMessage` aggregate and its invariants. `Application` contains commands, queries, validators, and the repository contract. `Infrastructure` implements the repository, EF Core persistence, and `[IoC]` registration. `API` composes the layers and defines versioned HTTP contracts. No email-provider or AI integration is implemented.
 
-La solución contiene los ocho proyectos requeridos:
+The solution contains the eight required projects:
 
 - `SmartInbox.Domain`, `SmartInbox.Application`, `SmartInbox.Infrastructure`, `SmartInbox.API`
 - `SmartInbox.Domain.Tests`, `SmartInbox.Application.Tests`, `SmartInbox.Infrastructure.Tests`, `SmartInbox.API.Tests`
 
-Las decisiones y límites están en [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md); el estado y la guía para continuar, en [docs/HANDOFF_ES.md](docs/HANDOFF_ES.md); y las fases posteriores, en [docs/ROADMAP.md](docs/ROADMAP.md).
+See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for design decisions and boundaries, [docs/HANDOFF.md](docs/HANDOFF.md) for implementation status and continuation steps, and [docs/ROADMAP.md](docs/ROADMAP.md) for later phases.
 
-## Requisitos
+## Requirements
 
 - .NET 10 SDK
-- Docker Desktop con Docker Compose
-- PowerShell 7 para los ejemplos de esta guía
+- Docker Desktop with Docker Compose
+- PowerShell 7 for the commands in this guide
 
-## Arranque local
+## Local setup
 
-PostgreSQL se publica únicamente en `127.0.0.1:5432`. Compose crea bases separadas `smartinbox_dev` y `smartinbox_test`; la API local usa la primera y las pruebas de integración la segunda. El `.env.example` no incluye una contraseña funcional. En la primera ejecución, crea un `.env` local con una contraseña aleatoria; no lo subas a Git.
+PostgreSQL is exposed only on `127.0.0.1:5432`. Compose creates separate `smartinbox_dev` and `smartinbox_test` databases; the local API uses the first and integration tests use the second. `.env.example` does not contain a usable password. On first run, create a local `.env` with a random password; do not commit it.
 
 ```powershell
 if (-not (Test-Path '.env')) {
@@ -44,7 +44,7 @@ if (-not (Test-Path '.env')) {
 docker compose up -d
 ```
 
-Guarda una cadena de conexión y un token de servicio en User Secrets. El proyecto ya incluye un `UserSecretsId`; los valores permanecen fuera del repositorio.
+Store a connection string and service token in User Secrets. The API project already has a `UserSecretsId`; these values stay outside the repository.
 
 ```powershell
 $password = ((Get-Content '.env' | Where-Object { $_.StartsWith('SMARTINBOX_DB_PASSWORD=') }) -split '=', 2)[1]
@@ -54,7 +54,7 @@ dotnet user-secrets set 'ConnectionStrings:Database' $connection --project 'src/
 dotnet user-secrets set 'ServiceAuthentication:Token' $token --project 'src/SmartInbox.API/SmartInbox.API.csproj'
 ```
 
-Las migraciones no se ejecutan al arrancar la API. Aplícalas explícitamente y después inicia el servidor:
+Migrations do not run when the API starts. Apply them explicitly, then start the server:
 
 ```powershell
 dotnet tool restore
@@ -64,13 +64,13 @@ Remove-Item Env:ConnectionStrings__Database
 dotnet run --project 'src/SmartInbox.API/SmartInbox.API.csproj'
 ```
 
-La API local escucha en `http://127.0.0.1:5168`. Para usar otro entorno, define `ConnectionStrings__Database` y `ServiceAuthentication__Token` mediante variables de entorno o User Secrets. El token debe tener al menos 32 caracteres.
+The local API listens on `http://127.0.0.1:5168`. To use another environment, set `ConnectionStrings__Database` and `ServiceAuthentication__Token` through environment variables or User Secrets. The token must be at least 32 characters long.
 
 ## API v1
 
-Todos los endpoints bajo `/api/v1/messages` requieren `Authorization: Bearer <service-token>`. `/health` es público y comprueba PostgreSQL.
+All endpoints under `/api/v1/messages` require `Authorization: Bearer <service-token>`. `/health` is public and checks PostgreSQL connectivity.
 
-Ejemplo de [correo sintético](docs/examples/synthetic-email.json):
+Example [synthetic email](docs/examples/synthetic-email.json):
 
 ```json
 {
@@ -80,13 +80,13 @@ Ejemplo de [correo sintético](docs/examples/synthetic-email.json):
   "externalThreadId": "demo-thread-001",
   "senderEmail": "alex@example.test",
   "senderName": "Alex Example",
-  "subject": "Consulta de demostración",
-  "bodyText": "Hola, este correo es completamente sintético.",
+  "subject": "Synthetic demo request",
+  "bodyText": "This message is synthetic and is used to validate Smart Inbox Automation.",
   "receivedAt": "2026-10-21T09:00:00Z",
   "attachments": [
     {
       "externalAttachmentId": "demo-attachment-001",
-      "name": "presupuesto-demo.pdf",
+      "name": "demo-budget.pdf",
       "contentType": "application/pdf",
       "sizeBytes": 12345
     }
@@ -94,13 +94,13 @@ Ejemplo de [correo sintético](docs/examples/synthetic-email.json):
 }
 ```
 
-Las respuestas de `POST` son `202 Accepted` al guardar por primera vez y `200 OK` al repetir el mismo contenido. Ambas incluyen el mismo ID interno:
+`POST` returns `202 Accepted` when a message is first stored and `200 OK` when the same content is submitted again. Both responses include the same internal ID:
 
 ```json
 {"id":"6a47dbcf-61fb-4a86-b91d-6adef46db57a","status":"Received"}
 ```
 
-Si se reutiliza la misma combinación `(Source, MailboxId, ExternalMessageId)` con contenido distinto, responde `409 Conflict` sin cambiar el registro original:
+Reusing the same `(Source, MailboxId, ExternalMessageId)` combination with different content returns `409 Conflict` and leaves the original record unchanged:
 
 ```json
 {
@@ -122,15 +122,15 @@ Invoke-WebRequest -Uri "http://127.0.0.1:5168/api/v1/messages/$id" -Headers $hea
 Invoke-WebRequest -Uri 'http://127.0.0.1:5168/api/v1/messages?pageNumber=1&pageSize=20' -Headers $headers -SkipHttpErrorCheck | Select-Object -ExpandProperty StatusCode
 ```
 
-`GET /api/v1/messages/{id}` devuelve `404` cuando el ID interno no existe. `GET /api/v1/messages` acepta `pageNumber` de 1 a 10 000 y `pageSize` de 1 a 100. Los errores usan `ProblemDetails`; la API no devuelve excepciones internas.
+`GET /api/v1/messages/{id}` returns `404` when the internal ID does not exist. `GET /api/v1/messages` accepts `pageNumber` from 1 to 10,000 and `pageSize` from 1 to 100. Errors use `ProblemDetails`; the API does not return internal exceptions.
 
-Se aceptan hasta 10 entradas de metadatos de adjuntos (ID externo, nombre, tipo MIME y tamaño). No se reciben ni se guardan bytes de archivos. Los campos JSON desconocidos se rechazan, incluidos posibles campos de contenido binario.
+The API accepts up to 10 attachment metadata entries (external ID, name, MIME type, and size). It does not receive or store file bytes. Unknown JSON fields are rejected, including possible binary content fields.
 
-Los límites de ingestión son: cuerpo HTTP de 65 536 bytes, texto del cuerpo de 40 000 caracteres, asunto de 998, IDs externos de 512 y buzón de 256 caracteres. El resto de los límites está en `InboundMessageLimits` y se valida antes de persistir.
+Ingestion limits are: HTTP body size of 65,536 bytes, body text of 40,000 characters, subject of 998 characters, external IDs of 512 characters, and mailbox ID of 256 characters. Other limits are defined in `InboundMessageLimits` and validated before persistence.
 
-## Pruebas, build y auditoría
+## Tests, build, and package audit
 
-Las pruebas de integración usan PostgreSQL real en localhost. La cadena debe apuntar a una base dedicada cuyo nombre termine en `_test`; Compose crea `smartinbox_test`. Las pruebas no borran la base ni sus filas.
+Integration tests use PostgreSQL on localhost. The connection string must target a dedicated database whose name ends in `_test`; Compose creates `smartinbox_test`. Tests do not delete the database or its rows.
 
 ```powershell
 $password = ((Get-Content '.env' | Where-Object { $_.StartsWith('SMARTINBOX_DB_PASSWORD=') }) -split '=', 2)[1]
@@ -142,10 +142,10 @@ dotnet list SmartInbox.sln package --vulnerable --include-transitive
 Remove-Item Env:SMARTINBOX_TEST_CONNECTION_STRING
 ```
 
-`dotnet tool restore` instala la versión fijada de `dotnet-ef`. GitHub Actions ejecuta restore, build Release, pruebas unitarias y de integración con PostgreSQL y auditoría NuGet; no usa claves reales ni proveedores externos.
+`dotnet tool restore` installs the pinned `dotnet-ef` version. GitHub Actions runs restore, Release build, unit and PostgreSQL integration tests, and a NuGet package audit. It does not use real credentials or external providers.
 
-## Seguridad y privacidad
+## Security and privacy
 
-Esta aplicación está limitada a una demo local con datos sintéticos. No la expongas a redes no confiables ni proceses correos reales de clientes. Antes harían falta controles de identidad y autorización, rotación de credenciales, retención y borrado, cifrado y gestión operativa. El cuerpo del correo se guarda como texto en PostgreSQL para cumplir la ingestión de esta fase. Los logs de aplicación no incluyen cuerpos, destinatarios, tokens ni payloads.
+This application is limited to a local demo with synthetic data. Do not expose it to untrusted networks or process real customer email. Identity and authorization controls, credential rotation, retention and deletion, encryption, and operational controls would be needed before broader use. The email body is stored as plain text in PostgreSQL for this phase's ingestion requirement. Application logs do not include message bodies, recipients, tokens, or payloads.
 
-El código propio se distribuye bajo MIT; MediatR 12.5.0 conserva su licencia Apache 2.0. Consulta [LICENSE](LICENSE).
+Original code is distributed under the MIT License; MediatR 12.5.0 retains its Apache 2.0 license. See [LICENSE](LICENSE).

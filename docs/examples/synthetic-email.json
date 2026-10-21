@@ -5,13 +5,13 @@
   "externalThreadId": "demo-thread-001",
   "senderEmail": "alex@example.test",
   "senderName": "Alex Example",
-  "subject": "Consulta de demostración",
-  "bodyText": "Hola, este correo es completamente sintético y se usa para validar Smart Inbox Automation.",
+  "subject": "Synthetic demo request",
+  "bodyText": "This message is synthetic and is used to validate Smart Inbox Automation.",
   "receivedAt": "2026-10-21T09:00:00Z",
   "attachments": [
     {
       "externalAttachmentId": "demo-attachment-001",
-      "name": "presupuesto-demo.pdf",
+      "name": "demo-budget.pdf",
       "contentType": "application/pdf",
       "sizeBytes": 12345
     }
