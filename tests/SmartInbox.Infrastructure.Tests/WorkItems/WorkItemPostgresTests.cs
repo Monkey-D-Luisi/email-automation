@@ -101,9 +101,11 @@ public sealed class WorkItemPostgresTests(PostgresFixture fixture)
         await using (var context = fixture.CreateContext())
         {
             await context.Database.ExecuteSqlRawAsync(
+                "DELETE FROM \"__EFMigrationsHistory\" WHERE \"MigrationId\" = '20261021142118_AddGmailDraftExports'");
+            await context.Database.ExecuteSqlRawAsync(
                 "DELETE FROM \"__EFMigrationsHistory\" WHERE \"MigrationId\" = '20261021122611_AddHumanReviewAndDrafts'");
             await context.Database.ExecuteSqlRawAsync(
-                "DROP TABLE response_draft_revisions, work_item_audit_entries, work_item_facts, response_drafts, work_items CASCADE");
+                "DROP TABLE gmail_draft_exports, response_draft_revisions, work_item_audit_entries, work_item_facts, response_drafts, work_items CASCADE");
             await context.Database.MigrateAsync();
         }
 
@@ -200,6 +202,119 @@ public sealed class WorkItemPostgresTests(PostgresFixture fixture)
         Assert.NotNull(history);
         Assert.Contains(history, entry => entry.Action == WorkItemAuditAction.DraftApproved);
         Assert.Contains(history, entry => entry.Action == WorkItemAuditAction.DraftEdited);
+    }
+
+    [Fact]
+    public async Task Gmail_export_is_idempotent_and_only_one_postgres_worker_can_claim_it()
+    {
+        await fixture.ResetAsync();
+        var (workItemId, requested) = await CreatePendingExportAsync();
+        using var services = fixture.CreateServiceProvider();
+        using var secondServices = fixture.CreateServiceProvider();
+        using var firstScope = services.CreateScope();
+        using var secondScope = secondServices.CreateScope();
+        var firstRepository = firstScope.ServiceProvider.GetRequiredService<IGmailDraftExportRepository>();
+        var secondRepository = secondScope.ServiceProvider.GetRequiredService<IGmailDraftExportRepository>();
+
+        var duplicate = await firstRepository.CreateOrGetAsync(requested, expectedWorkItemVersion: 3);
+        Assert.False(duplicate.Created);
+        Assert.Equal(requested.Id, duplicate.Export.Id);
+
+        var claims = await Task.WhenAll(
+            firstRepository.ClaimPendingAsync("test-mailbox", TimeSpan.FromMinutes(5), Now.AddMinutes(5)),
+            secondRepository.ClaimPendingAsync("test-mailbox", TimeSpan.FromMinutes(5), Now.AddMinutes(5)));
+        var claim = Assert.Single(claims, value => value is not null)!;
+        var claimantRepository = claims[0] is not null ? firstRepository : secondRepository;
+        var duplicateCallbackRepository = claims[0] is not null ? secondRepository : firstRepository;
+        Assert.Equal(GmailDraftExportStatus.InProgress, claim.Status);
+        Assert.Equal(requested.Subject, claim.Subject);
+        Assert.Equal(requested.Body, claim.Body);
+        Assert.Equal(requested.ContentFingerprint, claim.ContentFingerprint);
+
+        Assert.Equal(GmailDraftExportTransition.Applied, await claimantRepository.CompleteAsync(
+            claim.Id, claim.AttemptId!.Value, "synthetic-gmail-draft-1", Now.AddMinutes(6)));
+        Assert.Equal(GmailDraftExportTransition.Duplicate, await duplicateCallbackRepository.CompleteAsync(
+            claim.Id, claim.AttemptId.Value, "synthetic-gmail-draft-1", Now.AddMinutes(6)));
+        var persisted = Assert.Single(await firstRepository.ListByWorkItemAsync(workItemId) ?? []);
+        Assert.Equal(GmailDraftExportStatus.Succeeded, persisted.Status);
+        Assert.Equal("synthetic-gmail-draft-1", persisted.GmailDraftId);
+        Assert.Contains(await firstScope.ServiceProvider.GetRequiredService<IWorkItemRepository>().GetHistoryAsync(workItemId) ?? [],
+            entry => entry.Action == WorkItemAuditAction.GmailDraftExportSucceeded);
+    }
+
+    [Fact]
+    public async Task Expired_gmail_export_claim_requires_reconciliation_and_never_returns_to_the_queue()
+    {
+        await fixture.ResetAsync();
+        var (workItemId, requested) = await CreatePendingExportAsync();
+        using var services = fixture.CreateServiceProvider();
+        using var scope = services.CreateScope();
+        var exports = scope.ServiceProvider.GetRequiredService<IGmailDraftExportRepository>();
+        var claim = Assert.IsType<GmailDraftExport>(await exports.ClaimPendingAsync(
+            "test-mailbox", TimeSpan.FromMinutes(5), Now.AddMinutes(5)));
+
+        Assert.Null(await exports.ClaimPendingAsync("test-mailbox", TimeSpan.FromMinutes(5), Now.AddMinutes(11)));
+        var unresolved = Assert.Single(await exports.ListByWorkItemAsync(workItemId) ?? []);
+        Assert.Equal(GmailDraftExportStatus.NeedsReconciliation, unresolved.Status);
+        Assert.Equal(GmailDraftExportFailureKind.ProviderOutcomeUnknown, unresolved.FailureKind);
+
+        var workItem = await scope.ServiceProvider.GetRequiredService<IWorkItemRepository>().GetByIdAsync(workItemId);
+        Assert.NotNull(workItem);
+        var reconciled = await exports.ReconcileAsync(
+            workItemId, requested.Id, workItem.Version, "test-mailbox", "reviewer-1",
+            "synthetic-gmail-draft-reconciled", Now.AddMinutes(12));
+        Assert.Equal(GmailDraftExportStatus.Succeeded, reconciled!.Status);
+        Assert.Equal("synthetic-gmail-draft-reconciled", reconciled.GmailDraftId);
+        Assert.Equal(claim.AttemptId, reconciled.AttemptId);
+    }
+
+    [Fact]
+    public async Task Editing_the_approved_draft_cancels_a_pending_export_before_dispatch()
+    {
+        await fixture.ResetAsync();
+        var (workItemId, requested) = await CreatePendingExportAsync();
+        using var services = fixture.CreateServiceProvider();
+        using var scope = services.CreateScope();
+        var workItems = scope.ServiceProvider.GetRequiredService<IWorkItemRepository>();
+        var exports = scope.ServiceProvider.GetRequiredService<IGmailDraftExportRepository>();
+        var item = await workItems.GetByIdAsync(workItemId);
+        Assert.NotNull(item);
+        item.SaveDraft("alex@example.test", "Synthetic response", "A new unapproved revision.", "reviewer-1", Now.AddMinutes(10));
+        await workItems.SaveAsync(item);
+
+        Assert.Null(await exports.ClaimPendingAsync("test-mailbox", TimeSpan.FromMinutes(5), Now.AddMinutes(11)));
+        var cancelled = Assert.Single(await exports.ListByWorkItemAsync(workItemId) ?? []);
+        Assert.Equal(requested.Id, cancelled.Id);
+        Assert.Equal(GmailDraftExportStatus.Cancelled, cancelled.Status);
+        Assert.Contains(await workItems.GetHistoryAsync(workItemId) ?? [],
+            entry => entry.Action == WorkItemAuditAction.GmailDraftExportCancelled);
+    }
+
+    private async Task<(Guid WorkItemId, GmailDraftExport Export)> CreatePendingExportAsync()
+    {
+        var messageId = await AddProcessedMessageAsync(senderEmail: "alex@example.test");
+        var workItemId = await GetWorkItemIdAsync(messageId);
+        using var services = fixture.CreateServiceProvider();
+        using var scope = services.CreateScope();
+        var workItems = scope.ServiceProvider.GetRequiredService<IWorkItemRepository>();
+        var item = await workItems.GetByIdAsync(workItemId);
+        Assert.NotNull(item);
+        item.StartReview("reviewer-1", Now.AddMinutes(1));
+        await workItems.SaveAsync(item);
+        item = await workItems.GetByIdAsync(workItemId);
+        Assert.NotNull(item);
+        item.SaveDraft("alex@example.test", "Synthetic response", "We received your message.", "reviewer-1", Now.AddMinutes(2));
+        await workItems.SaveAsync(item);
+        item = await workItems.GetByIdAsync(workItemId);
+        Assert.NotNull(item);
+        item.ApproveDraft(1, "reviewer-1", Now.AddMinutes(3));
+        await workItems.SaveAsync(item);
+
+        var export = GmailDraftExport.Create(item, "test-mailbox", "alex@example.test", "reviewer-1", Now.AddMinutes(4));
+        var result = await scope.ServiceProvider.GetRequiredService<IGmailDraftExportRepository>()
+            .CreateOrGetAsync(export, item.Version);
+        Assert.True(result.Created);
+        return (workItemId, export);
     }
 
     private async Task<Guid> AddProcessedMessageAsync(string senderEmail = "sender@example.test")

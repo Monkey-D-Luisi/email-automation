@@ -1,0 +1,671 @@
+{
+  "name": "Smart Inbox Gmail Ingestion",
+  "nodes": [
+    {
+      "id": "gmail-trigger-2445",
+      "name": "Gmail Trigger",
+      "type": "n8n-nodes-base.gmailTrigger",
+      "typeVersion": 1.4,
+      "position": [
+        260,
+        220
+      ],
+      "parameters": {
+        "pollTimes": {
+          "item": [
+            {
+              "mode": "everyMinute"
+            }
+          ]
+        },
+        "simple": false,
+        "maxResults": 10,
+        "filters": {
+          "includeSpamTrash": false,
+          "includeDrafts": false,
+          "labelIds": [
+            "INBOX"
+          ],
+          "q": "in:inbox -in:sent -in:drafts -in:spam -in:trash",
+          "readStatus": "both"
+        },
+        "options": {
+          "downloadAttachments": false
+        }
+      }
+    },
+    {
+      "id": "manual-trigger",
+      "name": "Manual Synthetic Gmail Event",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        260,
+        440
+      ],
+      "parameters": {}
+    },
+    {
+      "id": "synthetic-fixture",
+      "name": "Synthetic Parsed Gmail Fixture",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        480,
+        440
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "return [{ json: {\n  id: \"synthetic-gmail-message-001\",\n  threadId: \"synthetic-gmail-thread-001\",\n  messageId: \"<synthetic-rfc-message-001@example.test>\",\n  subject: \"Invoice INV-2030 question\",\n  text: \"Hello, could you check invoice INV-2030?\\\\n\\\\nThank you.\",\n  html: \"<p>Hello, could you check invoice <strong>INV-2030</strong>?</p>\",\n  from: { text: \"Synthetic Sender <alex@example.test>\", value: [{ name: \"Synthetic Sender\", address: \"alex@example.test\" }] },\n  date: \"2026-10-21T10:15:00.000Z\",\n  attachments: [{ attachmentId: \"synthetic-attachment-001\", filename: \"invoice.pdf\", contentType: \"application/pdf\", size: 1024 }]\n} }];"
+      }
+    },
+    {
+      "id": "map-gmail-message",
+      "name": "Map and Validate Gmail Message",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        700,
+        300
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const incoming = $input.all();\n\nfunction htmlToText(html) {\n  const entities = { amp: \"&\", lt: \"<\", gt: \">\", quot: '\"', apos: \"'\", nbsp: \" \" };\n  return html\n    .replace(/<script\\b[^>]*>[\\s\\S]*?<\\/script\\s*>/gi, \" \")\n    .replace(/<style\\b[^>]*>[\\s\\S]*?<\\/style\\s*>/gi, \" \")\n    .replace(/<!--([\\s\\S]*?)-->/g, \" \")\n    .replace(/<(br|\\/p|\\/div|\\/li|\\/tr|\\/h[1-6])\\b[^>]*>/gi, \"\\n\")\n    .replace(/<[^>]*>/g, \" \")\n    .replace(/&(#(?:x[\\da-f]+|\\d+)|[a-z]+);/gi, (entity, name) => {\n      if (name[0] !== \"#\") return entities[name.toLowerCase()] ?? entity;\n      const codePoint = name[1].toLowerCase() === \"x\"\n        ? Number.parseInt(name.slice(2), 16)\n        : Number.parseInt(name.slice(1), 10);\n      return Number.isInteger(codePoint) && codePoint >= 0 && codePoint <= 0x10ffff\n        ? String.fromCodePoint(codePoint)\n        : \" \";\n    })\n    .replace(/\\r/g, \"\")\n    .replace(/[\\t ]+\\n/g, \"\\n\")\n    .replace(/\\n[\\t ]+/g, \"\\n\")\n    .trim();\n}\n\nfunction mapMessage(message) {\n  const messageId = typeof message.id === \"string\" ? message.id.trim() : \"\";\n  const invalid = reason => ({ json: { valid: false, reason, providerMessageId: messageId || null } });\n  if (!messageId || messageId.length > 512) return invalid(\"invalid-gmail-message-id\");\n\n  const from = message.from?.value?.[0];\n  const fromText = typeof message.from?.text === \"string\"\n    ? message.from.text\n    : typeof message.headers?.from === \"string\"\n      ? message.headers.from.replace(/^from:\\s*/i, \"\")\n      : \"\";\n  const senderEmail = typeof from?.address === \"string\"\n    ? from.address.trim()\n    : fromText.match(/<([^<>]+)>/)?.[1]?.trim() ?? (fromText.includes(\"@\") ? fromText.trim() : null);\n  const senderName = typeof from?.name === \"string\" && from.name.trim()\n    ? from.name.trim()\n    : null;\n  if (senderEmail && (!/^[^\\s<>@]+@[^\\s<>@]+\\.[^\\s<>@]+$/.test(senderEmail) || senderEmail.length > 320))\n    return invalid(\"invalid-sender-address\");\n  if (senderName && senderName.length > 256) return invalid(\"sender-name-too-long\");\n\n  const subject = typeof message.subject === \"string\" ? message.subject : \"\";\n  if (subject.length > 998 || /[\\r\\n]/.test(subject)) return invalid(\"invalid-subject\");\n  const bodyText = typeof message.text === \"string\" && message.text.trim()\n    ? message.text\n    : typeof message.html === \"string\"\n      ? htmlToText(message.html)\n      : \"\";\n  if (!bodyText.trim()) return invalid(\"message-body-empty\");\n  if (bodyText.length > 40000) return invalid(\"message-body-too-long\");\n\n  const receivedAt = message.date ?? message.internalDate;\n  const receivedDate = receivedAt instanceof Date ? receivedAt : new Date(receivedAt);\n  if (!receivedAt || Number.isNaN(receivedDate.getTime())) return invalid(\"invalid-received-at\");\n\n  const rawAttachments = Array.isArray(message.attachments) ? message.attachments : [];\n  if (rawAttachments.length > 10) return invalid(\"too-many-attachments\");\n  const attachments = rawAttachments.flatMap(attachment => {\n    if (!attachment || typeof attachment !== \"object\") return [];\n    const id = attachment.attachmentId ?? attachment.partId ?? attachment.id;\n    const name = attachment.filename ?? attachment.name;\n    const contentType = attachment.contentType ?? attachment.mimeType;\n    const sizeBytes = attachment.sizeBytes ?? attachment.size;\n    if (id == null || name == null || contentType == null || !Number.isSafeInteger(sizeBytes) || sizeBytes < 0)\n      return [];\n    return [{ externalAttachmentId: String(id), name: String(name), contentType: String(contentType), sizeBytes }];\n  });\n\n  const threadId = typeof message.threadId === \"string\" && message.threadId.length <= 512\n    ? message.threadId\n    : null;\n  const correlationId = `gmail-${messageId}`.slice(0, 120);\n  return {\n    json: {\n      valid: true,\n      correlationId,\n      payload: {\n        gmailMessageId: messageId,\n        gmailThreadId: threadId,\n        senderEmail,\n        senderName,\n        subject,\n        bodyText,\n        receivedAt: receivedDate.toISOString(),\n        attachments,\n      },\n    },\n  };\n}\n\nreturn incoming.map(item => mapMessage(item.json ?? {}));\n"
+      }
+    },
+    {
+      "id": "is-message-valid",
+      "name": "Message Valid?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        910,
+        300
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "is-message-valid-condition",
+              "leftValue": "={{$json.valid === true}}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      }
+    },
+    {
+      "id": "prepare-api-request",
+      "name": "Build Gmail API Request",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1120,
+        220
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const item = $input.first().json;\nreturn [{ json: { payload: item.payload, correlationId: item.correlationId, providerMessageId: item.payload.gmailMessageId, attempt: 1 } }];"
+      }
+    },
+    {
+      "id": "Gmail API Ingestion",
+      "name": "Gmail API Ingestion",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1340,
+        220
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "={{$env.SMARTINBOX_API_ORIGIN + '/api/v1/integrations/gmail/messages'}}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "={{'Bearer ' + $env.SMARTINBOX_GMAIL_INGESTION_TOKEN}}"
+            },
+            {
+              "name": "X-Correlation-ID",
+              "value": "={{$json.correlationId}}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{$json.payload}}",
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "json",
+              "fullResponse": true,
+              "neverError": true
+            }
+          }
+        }
+      },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "id": "classify-api-response",
+      "name": "Classify Gmail API Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1560,
+        220
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const response = $input.first().json;\nconst request = $(\"Build Gmail API Request\").item.json;\nconst status = Number(response.statusCode ?? 0);\nlet outcome = \"unexpected\";\nif (status === 202) outcome = \"accepted\";\nelse if (status === 200) outcome = \"duplicate\";\nelse if (status === 409) outcome = \"conflict\";\nelse if (status === 401 || status === 403) outcome = \"authentication\";\nelse if (status === 400 || status === 413 || status === 422) outcome = \"validation\";\nelse if (status === 429) outcome = \"rate-limited\";\nelse if (status >= 500) outcome = \"temporary-backend\";\nconst networkFailure = status === 0;\nconst retry = (networkFailure || status === 429 || status >= 500) && request.attempt < 3;\nreturn [{ json: {\n  outcome: retry ? \"retrying\" : outcome === \"temporary-backend\" || outcome === \"rate-limited\" || networkFailure ? \"retry-exhausted\" : outcome,\n  httpStatus: status || null,\n  attemptCount: request.attempt,\n  correlationId: request.correlationId,\n  providerMessageId: request.providerMessageId,\n  retry,\n  ...(retry ? { payload: request.payload } : {})\n} }];"
+      }
+    },
+    {
+      "id": "retry-api-response",
+      "name": "Retry Transient API Failure?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1770,
+        220
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "retry-api-response-condition",
+              "leftValue": "={{$json.retry === true}}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      }
+    },
+    {
+      "id": "ingestion-backoff",
+      "name": "Bounded Exponential Backoff",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [
+        1980,
+        80
+      ],
+      "parameters": {
+        "amount": "={{Math.pow(2, $json.attemptCount - 1)}}",
+        "unit": "seconds"
+      }
+    },
+    {
+      "id": "prepare-retry-request",
+      "name": "Prepare Bounded Retry",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2190,
+        80
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const request = $input.first().json;\nreturn [{ json: {\n  payload: request.payload,\n  correlationId: request.correlationId,\n  providerMessageId: request.providerMessageId,\n  attempt: request.attempt + 1\n} }];"
+      }
+    },
+    {
+      "id": "Retry Gmail API Ingestion",
+      "name": "Retry Gmail API Ingestion",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2400,
+        80
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "={{$env.SMARTINBOX_API_ORIGIN + '/api/v1/integrations/gmail/messages'}}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "={{'Bearer ' + $env.SMARTINBOX_GMAIL_INGESTION_TOKEN}}"
+            },
+            {
+              "name": "X-Correlation-ID",
+              "value": "={{$json.correlationId}}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{$json.payload}}",
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "json",
+              "fullResponse": true,
+              "neverError": true
+            }
+          }
+        }
+      },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "id": "classify-retry-response",
+      "name": "Classify Retry Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2610,
+        80
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const response = $input.first().json;\nconst request = $(\"Prepare Bounded Retry\").item.json;\nconst status = Number(response.statusCode ?? 0);\nlet outcome = \"unexpected\";\nif (status === 202) outcome = \"accepted\";\nelse if (status === 200) outcome = \"duplicate\";\nelse if (status === 409) outcome = \"conflict\";\nelse if (status === 401 || status === 403) outcome = \"authentication\";\nelse if (status === 400 || status === 413 || status === 422) outcome = \"validation\";\nelse if (status === 429) outcome = \"rate-limited\";\nelse if (status >= 500) outcome = \"temporary-backend\";\nconst retry = (status === 429 || status >= 500) && request.attempt < 3;\nreturn [{ json: {\n  outcome: retry ? \"retrying\" : outcome === \"temporary-backend\" || outcome === \"rate-limited\" ? \"retry-exhausted\" : outcome,\n  httpStatus: status || null,\n  attemptCount: request.attempt,\n  correlationId: request.correlationId,\n  providerMessageId: request.providerMessageId,\n  retry,\n  ...(retry ? { payload: request.payload } : {})\n} }];"
+      }
+    },
+    {
+      "id": "retry-after-retry",
+      "name": "Retry Transient Failure Again?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        2820,
+        80
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "retry-after-retry-condition",
+              "leftValue": "={{$json.retry === true}}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      }
+    },
+    {
+      "id": "classify-network-error",
+      "name": "Classify Ingestion Network Error",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1560,
+        460
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const failed = $input.first().json;\nconst request = $(\"Build Gmail API Request\").item.json;\nconst retry = request.attempt < 3;\nreturn [{ json: {\n  outcome: retry ? \"retrying-network-error\" : \"retry-exhausted\",\n  httpStatus: null,\n  attemptCount: request.attempt,\n  correlationId: request.correlationId,\n  providerMessageId: request.providerMessageId,\n  retry,\n  ...(retry ? { payload: request.payload } : {})\n} }];"
+      }
+    },
+    {
+      "id": "retry-network-error",
+      "name": "Retry Network Failure?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1770,
+        460
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "retry-network-error-condition",
+              "leftValue": "={{$json.retry === true}}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      }
+    },
+    {
+      "id": "classify-retry-network-error",
+      "name": "Classify Retry Network Error",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2610,
+        340
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const failed = $input.first().json;\nconst request = $(\"Prepare Bounded Retry\").item.json;\nconst retry = request.attempt < 3;\nreturn [{ json: {\n  outcome: retry ? \"retrying-network-error\" : \"retry-exhausted\",\n  httpStatus: null,\n  attemptCount: request.attempt,\n  correlationId: request.correlationId,\n  providerMessageId: request.providerMessageId,\n  retry,\n  ...(retry ? { payload: request.payload } : {})\n} }];"
+      }
+    },
+    {
+      "id": "retry-after-network-error",
+      "name": "Retry Network Failure Again?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        2820,
+        340
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "retry-after-network-error-condition",
+              "leftValue": "={{$json.retry === true}}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      }
+    },
+    {
+      "id": "invalid-message-diagnostic",
+      "name": "Safe Invalid Message Diagnostic",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1120,
+        460
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "return $input.all().filter(item => item.json.valid !== true).map(item => ({ json: {\n  outcome: \"message-quarantined\",\n  reason: item.json.reason,\n  providerMessageId: item.json.providerMessageId\n} }));"
+      }
+    }
+  ],
+  "connections": {
+    "Gmail Trigger": {
+      "main": [
+        [
+          {
+            "node": "Map and Validate Gmail Message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Manual Synthetic Gmail Event": {
+      "main": [
+        [
+          {
+            "node": "Synthetic Parsed Gmail Fixture",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Synthetic Parsed Gmail Fixture": {
+      "main": [
+        [
+          {
+            "node": "Map and Validate Gmail Message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Map and Validate Gmail Message": {
+      "main": [
+        [
+          {
+            "node": "Message Valid?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Message Valid?": {
+      "main": [
+        [
+          {
+            "node": "Build Gmail API Request",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Safe Invalid Message Diagnostic",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Gmail API Request": {
+      "main": [
+        [
+          {
+            "node": "Gmail API Ingestion",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Gmail API Ingestion": {
+      "main": [
+        [
+          {
+            "node": "Classify Gmail API Response",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Classify Ingestion Network Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Classify Gmail API Response": {
+      "main": [
+        [
+          {
+            "node": "Retry Transient API Failure?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Retry Transient API Failure?": {
+      "main": [
+        [
+          {
+            "node": "Bounded Exponential Backoff",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    },
+    "Classify Ingestion Network Error": {
+      "main": [
+        [
+          {
+            "node": "Retry Network Failure?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Retry Network Failure?": {
+      "main": [
+        [
+          {
+            "node": "Bounded Exponential Backoff",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    },
+    "Bounded Exponential Backoff": {
+      "main": [
+        [
+          {
+            "node": "Prepare Bounded Retry",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Bounded Retry": {
+      "main": [
+        [
+          {
+            "node": "Retry Gmail API Ingestion",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Retry Gmail API Ingestion": {
+      "main": [
+        [
+          {
+            "node": "Classify Retry Response",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Classify Retry Network Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Classify Retry Response": {
+      "main": [
+        [
+          {
+            "node": "Retry Transient Failure Again?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Retry Transient Failure Again?": {
+      "main": [
+        [
+          {
+            "node": "Bounded Exponential Backoff",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    },
+    "Classify Retry Network Error": {
+      "main": [
+        [
+          {
+            "node": "Retry Network Failure Again?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Retry Network Failure Again?": {
+      "main": [
+        [
+          {
+            "node": "Bounded Exponential Backoff",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "saveDataErrorExecution": "none",
+    "saveDataSuccessExecution": "none",
+    "saveManualExecutions": false
+  },
+  "versionId": "02d0c7d1-e007-4f18-aaba-ecf169cce204",
+  "meta": {
+    "templateCredsSetupCompleted": false
+  },
+  "pinData": {}
+}

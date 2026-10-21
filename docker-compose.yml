@@ -1,4 +1,29 @@
 services:
+  n8n:
+    image: n8nio/n8n:2.44.5
+    container_name: smartinbox-n8n
+    profiles: ["integrations"]
+    ports:
+      - "127.0.0.1:5678:5678"
+    environment:
+      N8N_HOST: localhost
+      N8N_PORT: 5678
+      N8N_PROTOCOL: http
+      N8N_EDITOR_BASE_URL: http://localhost:5678/
+      WEBHOOK_URL: http://localhost:5678/
+      N8N_SECURE_COOKIE: "false"
+      N8N_BLOCK_ENV_ACCESS_IN_NODE: "false"
+      SMARTINBOX_API_ORIGIN: ${SMARTINBOX_API_ORIGIN:-http://host.docker.internal:5168}
+      SMARTINBOX_GMAIL_MODE: ${SMARTINBOX_GMAIL_MODE:-disabled}
+      SMARTINBOX_GMAIL_INGESTION_TOKEN: ${SMARTINBOX_GMAIL_INGESTION_TOKEN:-}
+      SMARTINBOX_GMAIL_DRAFT_EXPORT_TOKEN: ${SMARTINBOX_GMAIL_DRAFT_EXPORT_TOKEN:-}
+    volumes:
+      - smartinbox-n8n-data:/home/node/.n8n
+      - ./integrations/n8n:/opt/smartinbox/workflows:ro
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    restart: unless-stopped
+
   postgres:
     image: postgres:17-alpine
     container_name: smartinbox-postgres
@@ -19,3 +44,4 @@ services:
 
 volumes:
   smartinbox-postgres-data:
+  smartinbox-n8n-data:

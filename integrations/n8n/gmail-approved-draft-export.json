@@ -1,0 +1,601 @@
+{
+  "name": "Smart Inbox Approved Gmail Draft Export",
+  "nodes": [
+    {
+      "id": "outbound-schedule",
+      "name": "Poll Pending Gmail Draft Exports",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        260,
+        300
+      ],
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes",
+              "minutesInterval": 1
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "outbound-mode-gate",
+      "name": "Require Explicit Fake or Live Mode",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        480,
+        300
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const mode = $env.SMARTINBOX_GMAIL_MODE || \"disabled\";\nif (mode === \"disabled\") return [];\nif (mode !== \"fake\" && mode !== \"live\") throw new Error(\"Set SMARTINBOX_GMAIL_MODE to disabled, fake, or live.\");\nreturn [{ json: { mode } }];"
+      }
+    },
+    {
+      "id": "Claim Gmail Export",
+      "name": "Claim Gmail Export",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        700,
+        300
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "={{$env.SMARTINBOX_API_ORIGIN + '/api/v1/integrations/gmail/draft-exports/claim'}}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "={{'Bearer ' + $env.SMARTINBOX_GMAIL_DRAFT_EXPORT_TOKEN}}"
+            }
+          ]
+        },
+        "sendBody": false,
+        "specifyBody": "json",
+        "jsonBody": "={{ { } }}",
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "json",
+              "fullResponse": true,
+              "neverError": true
+            }
+          }
+        }
+      },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "id": "has-claim",
+      "name": "Export Claim Available?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        920,
+        300
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "has-claim-condition",
+              "leftValue": "={{$json.body?.claim != null}}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      }
+    },
+    {
+      "id": "is-fake-mode",
+      "name": "Use Fake Draft Adapter?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1140,
+        300
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "is-fake-mode-condition",
+              "leftValue": "={{$env.SMARTINBOX_GMAIL_MODE === 'fake'}}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      }
+    },
+    {
+      "id": "fake-draft-adapter",
+      "name": "Create Synthetic Gmail Draft ID",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1360,
+        180
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const claim = $input.first().json.body.claim;\nreturn [{ json: { claim, gmailDraftId: `fake-${claim.exportId}-${claim.attemptId}` } }];"
+      }
+    },
+    {
+      "id": "gmail-create-draft",
+      "name": "Create Gmail Draft",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.2,
+      "position": [
+        1360,
+        420
+      ],
+      "parameters": {
+        "authentication": "oAuth2",
+        "resource": "draft",
+        "operation": "create",
+        "subject": "={{$json.body.claim.subject}}",
+        "emailType": "text",
+        "message": "={{$json.body.claim.body}}",
+        "options": {
+          "sendTo": "={{$json.body.claim.recipientEmail}}"
+        }
+      },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "id": "validate-provider-draft-result",
+      "name": "Validate Gmail Draft Result",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1580,
+        420
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const provider = $input.first().json;\nconst claim = $(\"Claim Gmail Export\").first().json.body.claim;\nconst gmailDraftId = provider.id ?? provider.message?.id ?? null;\nreturn [{ json: { claim, gmailDraftId, valid: typeof gmailDraftId === \"string\" && gmailDraftId.length > 0 } }];"
+      }
+    },
+    {
+      "id": "valid-provider-draft-id",
+      "name": "Gmail Draft ID Returned?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1800,
+        420
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "valid-provider-draft-id-condition",
+              "leftValue": "={{$json.valid === true}}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      }
+    },
+    {
+      "id": "prepare-complete",
+      "name": "Prepare Export Completion",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2020,
+        180
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const item = $input.first().json;\nreturn [{ json: {\n  exportId: item.claim.exportId,\n  attemptId: item.claim.attemptId,\n  gmailDraftId: item.gmailDraftId\n} }];"
+      }
+    },
+    {
+      "id": "Record Gmail Draft ID",
+      "name": "Record Gmail Draft ID",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2240,
+        180
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "={{$env.SMARTINBOX_API_ORIGIN + '/api/v1/integrations/gmail/draft-exports/' + $json.exportId + '/complete'}}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "={{'Bearer ' + $env.SMARTINBOX_GMAIL_DRAFT_EXPORT_TOKEN}}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ { attemptId: $json.attemptId, gmailDraftId: $json.gmailDraftId } }}",
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "json",
+              "fullResponse": true,
+              "neverError": true
+            }
+          }
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 1000,
+      "onError": "continueErrorOutput"
+    },
+    {
+      "id": "prepare-ambiguous-callback",
+      "name": "Prepare Ambiguous Provider Outcome",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1580,
+        620
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const claim = $(\"Claim Gmail Export\").first().json.body.claim;\nreturn [{ json: { exportId: claim.exportId, attemptId: claim.attemptId, failureKind: \"ProviderOutcomeUnknown\" } }];"
+      }
+    },
+    {
+      "id": "prepare-missing-id-failure",
+      "name": "Prepare Missing Gmail Draft ID Failure",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2020,
+        560
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const item = $input.first().json;\nreturn [{ json: {\n  exportId: item.claim.exportId,\n  attemptId: item.claim.attemptId,\n  failureKind: \"ProviderOutcomeUnknown\"\n} }];"
+      }
+    },
+    {
+      "id": "Record Provider Outcome Unknown",
+      "name": "Record Provider Outcome Unknown",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2240,
+        560
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "={{$env.SMARTINBOX_API_ORIGIN + '/api/v1/integrations/gmail/draft-exports/' + $json.exportId + '/fail'}}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "={{'Bearer ' + $env.SMARTINBOX_GMAIL_DRAFT_EXPORT_TOKEN}}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ { attemptId: $json.attemptId, failureKind: $json.failureKind } }}",
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "json",
+              "fullResponse": true,
+              "neverError": true
+            }
+          }
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 1000,
+      "onError": "continueErrorOutput"
+    },
+    {
+      "id": "sanitize-completion-error",
+      "name": "Sanitize Integration Request Error",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2460,
+        320
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const item = $input.first().json;\nreturn [{ json: { outcome: \"integration-request-failed\", httpStatus: item.statusCode ?? null } }];"
+      }
+    },
+    {
+      "id": "sanitize-failure-callback-error",
+      "name": "Sanitize Failure Callback Error",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2460,
+        680
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const item = $input.first().json;\nreturn [{ json: {\n  outcome: \"callback-failed\",\n  exportId: item.exportId ?? null,\n  httpStatus: item.statusCode ?? null\n} }];"
+      }
+    },
+    {
+      "id": "report-empty-claim",
+      "name": "Report Claim Status Safely",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1140,
+        520
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const response = $input.first().json;\nconst status = Number(response.statusCode ?? 0);\nreturn [{ json: { outcome: status === 200 ? \"no-pending-export\" : \"claim-request-failed\", httpStatus: status || null } }];"
+      }
+    }
+  ],
+  "connections": {
+    "Poll Pending Gmail Draft Exports": {
+      "main": [
+        [
+          {
+            "node": "Require Explicit Fake or Live Mode",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Require Explicit Fake or Live Mode": {
+      "main": [
+        [
+          {
+            "node": "Claim Gmail Export",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Claim Gmail Export": {
+      "main": [
+        [
+          {
+            "type": "main",
+            "index": 0,
+            "node": "Export Claim Available?"
+          }
+        ],
+        [
+          {
+            "type": "main",
+            "index": 0,
+            "node": "Sanitize Integration Request Error"
+          }
+        ]
+      ]
+    },
+    "Export Claim Available?": {
+      "main": [
+        [
+          {
+            "node": "Use Fake Draft Adapter?",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Report Claim Status Safely",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Use Fake Draft Adapter?": {
+      "main": [
+        [
+          {
+            "node": "Create Synthetic Gmail Draft ID",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Create Gmail Draft",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create Synthetic Gmail Draft ID": {
+      "main": [
+        [
+          {
+            "node": "Prepare Export Completion",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create Gmail Draft": {
+      "main": [
+        [
+          {
+            "node": "Validate Gmail Draft Result",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Prepare Ambiguous Provider Outcome",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate Gmail Draft Result": {
+      "main": [
+        [
+          {
+            "node": "Gmail Draft ID Returned?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Gmail Draft ID Returned?": {
+      "main": [
+        [
+          {
+            "node": "Prepare Export Completion",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Prepare Missing Gmail Draft ID Failure",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Export Completion": {
+      "main": [
+        [
+          {
+            "node": "Record Gmail Draft ID",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Record Gmail Draft ID": {
+      "main": [
+        [],
+        [
+          {
+            "type": "main",
+            "index": 0,
+            "node": "Sanitize Integration Request Error"
+          }
+        ]
+      ]
+    },
+    "Prepare Ambiguous Provider Outcome": {
+      "main": [
+        [
+          {
+            "node": "Record Provider Outcome Unknown",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Missing Gmail Draft ID Failure": {
+      "main": [
+        [
+          {
+            "node": "Record Provider Outcome Unknown",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Record Provider Outcome Unknown": {
+      "main": [
+        [],
+        [
+          {
+            "type": "main",
+            "index": 0,
+            "node": "Sanitize Integration Request Error"
+          }
+        ]
+      ]
+    },
+    "Sanitize Failure Callback Error": {
+      "main": [
+        []
+      ]
+    },
+    "Sanitize Integration Request Error": {
+      "main": [
+        []
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "saveDataErrorExecution": "none",
+    "saveDataSuccessExecution": "none",
+    "saveManualExecutions": false
+  },
+  "versionId": "ca1ba37e-f9a6-4115-8fa1-d2ea58421356",
+  "meta": {
+    "templateCredsSetupCompleted": false
+  },
+  "pinData": {}
+}

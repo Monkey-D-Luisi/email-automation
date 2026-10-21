@@ -3,6 +3,7 @@ namespace SmartInbox.Application.Messages.Classification.Models;
 public enum EmailAnalysisProviderType
 {
     OpenAi = 1,
+    Fake = 2,
 }
 
 public static class EmailAnalysisProviderTypeCodec
@@ -10,17 +11,20 @@ public static class EmailAnalysisProviderTypeCodec
     public static string ToId(EmailAnalysisProviderType providerType) => providerType switch
     {
         EmailAnalysisProviderType.OpenAi => "openai",
+        EmailAnalysisProviderType.Fake => "fake",
         _ => throw new ArgumentOutOfRangeException(nameof(providerType)),
     };
 
     public static bool TryParse(string? providerId, out EmailAnalysisProviderType providerType)
     {
         providerType = default;
-        if (!string.Equals(providerId?.Trim(), "openai", StringComparison.OrdinalIgnoreCase))
-            return false;
-
-        providerType = EmailAnalysisProviderType.OpenAi;
-        return true;
+        providerType = providerId?.Trim().ToLowerInvariant() switch
+        {
+            "openai" => EmailAnalysisProviderType.OpenAi,
+            "fake" => EmailAnalysisProviderType.Fake,
+            _ => default,
+        };
+        return providerType != default;
     }
 
     public static EmailAnalysisProviderType Parse(string? providerId) =>

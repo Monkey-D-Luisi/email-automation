@@ -132,6 +132,16 @@ textarea { resize: vertical; }
 .draft-actions { display: flex; gap: 8px; flex-wrap: wrap; }
 .decision-box { display: grid; gap: 10px; margin-top: 14px; border-top: 1px solid #edf0f4; padding-top: 13px; }
 .decision-box .small-meta { margin: 0; }
+.gmail-export-card { display: grid; gap: 10px; }
+.gmail-export-card .section-heading, .gmail-export-card p { margin-bottom: 0; }
+.checkbox-label { display: flex; align-items: flex-start; gap: 8px; color: #536277; font-size: 11px; line-height: 1.45; }
+.checkbox-label input { width: auto; margin-top: 2px; }
+.gmail-export-list { display: grid; gap: 9px; margin-top: 4px; }
+.gmail-export-item { display: grid; gap: 10px; border: 1px solid #e6ebf1; border-radius: 8px; padding: 11px; }
+.gmail-export-item > div:first-child { display: grid; gap: 4px; color: #647287; font-size: 11px; overflow-wrap: anywhere; }
+.gmail-export-item > div:first-child strong { color: #344358; }
+.gmail-export-resolution { display: grid; gap: 8px; border-top: 1px solid #edf0f4; padding-top: 10px; }
+.gmail-export-resolution .secondary { width: fit-content; }
 .history-card { position: sticky; top: 16px; }
 .timeline { list-style: none; margin: 4px 0 0; padding: 0 0 0 3px; }
 .timeline li { position: relative; display: grid; grid-template-columns: 13px 1fr; gap: 8px; padding: 0 0 18px; }

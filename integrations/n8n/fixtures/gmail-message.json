@@ -1,0 +1,21 @@
+{
+  "id": "synthetic-gmail-message-001",
+  "threadId": "synthetic-gmail-thread-001",
+  "messageId": "<synthetic-rfc-message-001@example.test>",
+  "subject": "Invoice INV-2030 question",
+  "text": "Hello, could you check invoice INV-2030?\n\nThank you.",
+  "html": "<p>Hello, could you check invoice <strong>INV-2030</strong>?</p><script>unsafe()</script>",
+  "from": {
+    "text": "Synthetic Sender <alex@example.test>",
+    "value": [{ "name": "Synthetic Sender", "address": "alex@example.test" }]
+  },
+  "date": "2026-10-21T10:15:00.000Z",
+  "attachments": [
+    {
+      "attachmentId": "synthetic-attachment-001",
+      "filename": "invoice.pdf",
+      "contentType": "application/pdf",
+      "size": 1024
+    }
+  ]
+}

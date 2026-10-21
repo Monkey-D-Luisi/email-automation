@@ -21,6 +21,9 @@ public sealed class PostgresApiCollection : ICollectionFixture<PostgresApiFixtur
 public sealed class PostgresApiFixture : IAsyncLifetime
 {
     private const string TestToken = "test-token-for-service-authentication-0123456789abcdef";
+    public const string GmailIngestionTestToken = "test-token-for-gmail-ingestion-0123456789abcdef";
+    public const string GmailDraftExportTestToken = "test-token-for-gmail-draft-export-0123456789abcdef";
+    public const string GmailTestMailboxId = "integration-test-mailbox";
     private const long MigrationLockId = 824_111_177;
     private WebApplicationFactory<Program>? factory;
     private string adminConnectionString = string.Empty;
@@ -129,6 +132,11 @@ public sealed class PostgresApiFixture : IAsyncLifetime
                     ["EmailProcessing:Enabled"] = "true",
                     ["EmailProcessing:PollIntervalSeconds"] = "1",
                     ["OpenAI:ApiKey"] = "synthetic-test-credential",
+                    ["GmailIntegration:Enabled"] = "true",
+                    ["GmailIntegration:SourceId"] = "gmail-test",
+                    ["GmailIntegration:MailboxId"] = GmailTestMailboxId,
+                    ["GmailIntegration:IngestionToken"] = GmailIngestionTestToken,
+                    ["GmailIntegration:DraftExportToken"] = GmailDraftExportTestToken,
                 }));
             builder.ConfigureTestServices(services =>
             {

@@ -15,5 +15,13 @@ public enum WorkItemAuditAction
     DraftEdited,
     DraftApproved,
     DraftRejected,
+    GmailDraftExportRequested,
+    GmailDraftExportClaimed,
+    GmailDraftExportSucceeded,
+    GmailDraftExportFailed,
+    GmailDraftExportNeedsReconciliation,
+    GmailDraftExportCancelled,
+    GmailDraftExportRetryAuthorized,
+    GmailDraftExportReconciled,
     Resolved,
 }

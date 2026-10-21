@@ -12,6 +12,7 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
     internal DbSet<WorkItemFactRecord> WorkItemFacts => Set<WorkItemFactRecord>();
     internal DbSet<ResponseDraftRecord> ResponseDrafts => Set<ResponseDraftRecord>();
     internal DbSet<ResponseDraftRevisionRecord> ResponseDraftRevisions => Set<ResponseDraftRevisionRecord>();
+    internal DbSet<GmailDraftExportRecord> GmailDraftExports => Set<GmailDraftExportRecord>();
     internal DbSet<WorkItemAuditRecord> WorkItemAuditEntries => Set<WorkItemAuditRecord>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder) =>

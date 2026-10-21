@@ -8,7 +8,7 @@ internal sealed class WorkItemAuditRecordConfiguration : IEntityTypeConfiguratio
     public void Configure(EntityTypeBuilder<WorkItemAuditRecord> builder)
     {
         builder.ToTable("work_item_audit_entries", table =>
-            table.HasCheckConstraint("ck_work_item_audit_action", "\"Action\" IN ('Created', 'ReviewStarted', 'CategoryCorrected', 'PriorityCorrected', 'NotesChanged', 'MissingInformationChanged', 'FactVerified', 'FactCorrected', 'FactRejected', 'DraftCreated', 'DraftEdited', 'DraftApproved', 'DraftRejected', 'Resolved')"));
+            table.HasCheckConstraint("ck_work_item_audit_action", "\"Action\" IN ('Created', 'ReviewStarted', 'CategoryCorrected', 'PriorityCorrected', 'NotesChanged', 'MissingInformationChanged', 'FactVerified', 'FactCorrected', 'FactRejected', 'DraftCreated', 'DraftEdited', 'DraftApproved', 'DraftRejected', 'GmailDraftExportRequested', 'GmailDraftExportClaimed', 'GmailDraftExportSucceeded', 'GmailDraftExportFailed', 'GmailDraftExportNeedsReconciliation', 'GmailDraftExportCancelled', 'GmailDraftExportRetryAuthorized', 'GmailDraftExportReconciled', 'Resolved')"));
         builder.HasKey(entry => entry.Id);
         builder.HasIndex(entry => new { entry.WorkItemId, entry.OccurredAt }).HasDatabaseName("ix_work_item_audit_work_item_occurred_at");
         builder.Property(entry => entry.ActorId).HasMaxLength(128).IsRequired();

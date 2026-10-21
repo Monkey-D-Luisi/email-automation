@@ -53,8 +53,21 @@ Follow [README.md](../README.md) for PostgreSQL, User Secrets, migration applica
 
 PostgreSQL integration tests require `SMARTINBOX_TEST_CONNECTION_STRING` to point to a localhost database ending in `_test`. Each fixture creates and drops an isolated schema. The API acceptance test substitutes a fake classifier and uses the same local database fixture.
 
-## Limits and Phase 4
+## Phase 4 Gmail and n8n — 2026-10-21
 
-This is a single-reviewer localhost demo using synthetic data. It has no retention/deletion scheduler, multi-user identity administration, rate limiting, or production TLS deployment. The one-hour cookie expiry was simulated in the browser rather than observed after waiting an hour; Next.js also required a local port override on this Windows host. Email bodies and audit history persist in PostgreSQL until the operator removes them; source deletion cascades to related review data. Do not use real customer data or expose the service publicly.
+- Added a single-configured-mailbox Gmail ingestion endpoint protected by its own service token. The API, not n8n payload data, supplies the source and mailbox identity. Existing PostgreSQL message identity and replay semantics remain authoritative.
+- Added a PostgreSQL-backed export intent for the exact current approved draft revision, recipient, and configured mailbox. Claims are row-locked and leased; callbacks are attempt-scoped; duplicate requests/callbacks are safe. An expired or uncertain Gmail attempt requires manual reconciliation. No automatic retry follows a possibly successful Gmail create call.
+- Added a separate reviewer action and UI status/reconciliation controls. A reviewer explicitly confirms the existing recipient and requests an unsent external Gmail draft. The action is hidden when disabled or ineligible.
+- Added inactive, credential-free n8n workflow exports and an optional `n8nio/n8n:2.44.5` Compose service. The fake provider always returns an ambiguous `Unknown` classification that requires human review. Fake Gmail export records only a synthetic draft ID.
+- A configured mailbox ID is compared to the Gmail OAuth account by the operator during setup; the MVP does not verify OAuth account identity at runtime. `gmail.compose` itself allows sending, although the workflow contains only Gmail Draft/Create. Gmail reply threading is unsupported.
 
-Phase 4 must introduce a distinct, authorized execution step for any external draft creation or sending. It will need recipient verification, least-privilege provider scopes, idempotency, delivery receipts, revocation, bounded retries, and audit linkage to the exact approved revision. Current approval alone must never execute an external action.
+### Verification
+
+- Release build: passed with zero warnings and errors.
+- PostgreSQL-backed `dotnet test SmartInbox.sln -c Release --no-restore`: 115/115 passed (Domain 17, Application 51, Infrastructure 34, API 13). This includes export uniqueness, concurrent claims, duplicate callbacks, expiry/manual reconciliation, pending-export cancellation on edit, and Phase 3-to-Phase 4 migration replay.
+- `dotnet ef migrations has-pending-model-changes`: passed. NuGet package audit reported no known vulnerable packages.
+- Frontend and n8n fixture tests: 13/13 passed. Next.js production build passed; `npm audit` reported zero vulnerabilities.
+- The n8n 2.44.5 CLI imported both workflow JSON files successfully and exported them back as inactive. A Docker Compose run container reached the local API through `host.docker.internal`; `/health` returned HTTP 200. The temporary API process was stopped after this read-only probe.
+- Live Gmail OAuth, message polling, Gmail draft creation, and OpenAI requests were not performed. The n8n CLI importer was exercised; its `execute --id` command cannot start these trigger-based workflows, so manual workflow execution in the n8n editor remains to be done.
+
+This remains a single-reviewer localhost demo using synthetic data. There is no retention/deletion scheduler, multi-user identity administration, rate limiting, or production TLS deployment. Email bodies and audit history persist in PostgreSQL until the operator removes them. Do not use real customer data or expose the service publicly.

@@ -10,11 +10,13 @@ public sealed class EmailAnalysisProviderFactoryTests
     [Theory]
     [InlineData("openai", EmailAnalysisProviderType.OpenAi)]
     [InlineData(" OpenAI ", EmailAnalysisProviderType.OpenAi)]
+    [InlineData("fake", EmailAnalysisProviderType.Fake)]
+    [InlineData(" Fake ", EmailAnalysisProviderType.Fake)]
     public void Provider_identity_parses_stable_ids(string providerId, EmailAnalysisProviderType expected)
     {
         Assert.True(EmailAnalysisProviderTypeCodec.TryParse(providerId, out var parsed));
         Assert.Equal(expected, parsed);
-        Assert.Equal("openai", EmailAnalysisProviderTypeCodec.ToId(parsed));
+        Assert.Equal(EmailAnalysisProviderTypeCodec.ToId(expected), EmailAnalysisProviderTypeCodec.ToId(parsed));
     }
 
     [Fact]

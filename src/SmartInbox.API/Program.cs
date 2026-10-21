@@ -3,6 +3,7 @@ using SmartInbox.API.Authentication;
 using SmartInbox.API.Errors;
 using SmartInbox.API.Health;
 using SmartInbox.API.V1.Authentication.Endpoints;
+using SmartInbox.API.V1.Gmail.Endpoints;
 using SmartInbox.API.V1.Messages.Endpoints;
 using SmartInbox.API.V1.WorkItems.Endpoints;
 using Microsoft.AspNetCore.Authentication.Cookies;
@@ -44,6 +45,18 @@ builder.Services
                          !options.Password.Contains("example", StringComparison.OrdinalIgnoreCase),
         "ReviewAuthentication:Password must be a local secret of at least 32 characters.")
     .ValidateOnStart();
+builder.Services
+    .AddOptions<GmailIntegrationOptions>()
+    .Bind(builder.Configuration.GetSection(GmailIntegrationOptions.SectionName))
+    .Validate(options => !options.Enabled ||
+        (!string.IsNullOrWhiteSpace(options.SourceId) && options.SourceId.Length <= 64 &&
+         options.SourceId.All(character => char.IsAsciiLetterOrDigit(character) || character is '.' or '_' or '-') &&
+         !string.IsNullOrWhiteSpace(options.MailboxId) && options.MailboxId.Length <= 256 &&
+         options.IngestionToken.Length >= 32 && options.DraftExportToken.Length >= 32 &&
+         !string.Equals(options.IngestionToken, options.DraftExportToken, StringComparison.Ordinal) &&
+         options.ClaimLeaseSeconds is >= 30 and <= 3_600),
+        "GmailIntegration requires a source, mailbox ID, distinct service tokens of at least 32 characters, and a claim lease between 30 and 3600 seconds when enabled.")
+    .ValidateOnStart();
 builder.Services.AddAuthentication()
     .AddCookie(ReviewerAuthenticationOptions.SchemeName, options =>
     {
@@ -63,14 +76,33 @@ builder.Services.AddAuthentication()
             context.Response.StatusCode = StatusCodes.Status403Forbidden;
             return Task.CompletedTask;
         };
-    });
-builder.Services.AddAuthorization(options => options.AddPolicy(ReviewerAuthenticationOptions.PolicyName, policy =>
+    })
+    .AddScheme<Microsoft.AspNetCore.Authentication.AuthenticationSchemeOptions, GmailIntegrationAuthenticationHandler>(
+        GmailIntegrationOptions.IngestionSchemeName, _ => { })
+    .AddScheme<Microsoft.AspNetCore.Authentication.AuthenticationSchemeOptions, GmailIntegrationAuthenticationHandler>(
+        GmailIntegrationOptions.DraftExportSchemeName, _ => { });
+builder.Services.AddAuthorization(options =>
 {
-    policy.AddAuthenticationSchemes(ReviewerAuthenticationOptions.SchemeName);
-    policy.RequireAuthenticatedUser();
-    policy.RequireClaim("human-reviewer", "true");
-    policy.RequireClaim(System.Security.Claims.ClaimTypes.NameIdentifier);
-}));
+    options.AddPolicy(ReviewerAuthenticationOptions.PolicyName, policy =>
+    {
+        policy.AddAuthenticationSchemes(ReviewerAuthenticationOptions.SchemeName);
+        policy.RequireAuthenticatedUser();
+        policy.RequireClaim("human-reviewer", "true");
+        policy.RequireClaim(System.Security.Claims.ClaimTypes.NameIdentifier);
+    });
+    options.AddPolicy(GmailIntegrationOptions.IngestionPolicyName, policy =>
+    {
+        policy.AddAuthenticationSchemes(GmailIntegrationOptions.IngestionSchemeName);
+        policy.RequireAuthenticatedUser();
+        policy.RequireClaim("gmail-integration", "gmail-ingestion");
+    });
+    options.AddPolicy(GmailIntegrationOptions.DraftExportPolicyName, policy =>
+    {
+        policy.AddAuthenticationSchemes(GmailIntegrationOptions.DraftExportSchemeName);
+        policy.RequireAuthenticatedUser();
+        policy.RequireClaim("gmail-integration", "gmail-draft-export");
+    });
+});
 builder.Services.AddAntiforgery(options =>
 {
     options.HeaderName = "X-CSRF-TOKEN";
@@ -91,6 +123,7 @@ app.UseAuthorization();
 app.UseAntiforgery();
 app.MapReviewerAuthenticationEndpoints();
 app.MapMessageEndpoints();
+app.MapGmailIntegrationEndpoints();
 app.MapWorkItemEndpoints();
 app.MapHealthChecks("/health", new Microsoft.AspNetCore.Diagnostics.HealthChecks.HealthCheckOptions
 {

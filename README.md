@@ -189,6 +189,14 @@ Open `http://127.0.0.1:3000` and sign in with the configured reviewer password. 
 
 The backend integration test `WorkItemEndpointsTests.Reviewer_can_correct_verify_draft_approve_resolve_and_inspect_audit` runs the full workflow with a fake classifier and synthetic email: ingestion, classification, correction, fact verification, draft creation/edit/approval, resolution, and audit inspection. It uses an isolated PostgreSQL schema, makes no provider call, and sends no email. The Next.js app itself is build-checked; a live browser walkthrough is not part of the automated test suite. To populate a local panel, use a successfully classified synthetic message already in the configured database; the default-disabled worker intentionally does not classify new messages.
 
+### Gmail and n8n integration
+
+Phase 4 adds an optional, disabled-by-default n8n container and two inactive workflows. Start n8n only when needed with `docker compose --profile integrations up -d n8n`; the editor listens on `http://127.0.0.1:5678`. The API remains on the host, so when using n8n in Docker, start it with `ASPNETCORE_URLS=http://0.0.0.0:5168` and allow the `host.docker.internal` host header. Stop the listener after the local integration session. The workflows use the host gateway and separate service tokens; they do not use the browser reviewer cookie.
+
+Follow [integrations/n8n/README.md](integrations/n8n/README.md) for local-only synthetic mode, workflow import, token setup, Google OAuth configuration, and the live activation checklist. Importing the workflow files does not activate them. Internal approval alone never creates a Gmail artifact; a reviewer must confirm the configured mailbox and recipient and request an unsent Gmail draft. The integration has no send action. Gmail `gmail.compose` OAuth permission can still send mail, so live credentials must remain restricted to an explicitly authorized test account.
+
+An expired outbound claim or uncertain Gmail response requires manual reconciliation. Check the configured account's Drafts before retrying; a located draft ID can be recorded in the review panel. Gmail draft creation is not exactly-once, and email reply threading is unsupported in this MVP.
+
 Review history and message content remain in PostgreSQL until the operator removes them. Deletion, retention schedules, encryption at rest, credential rotation, and multi-reviewer access controls are not implemented. Use synthetic data on localhost only.
 
 ## Tests, build, and package audit

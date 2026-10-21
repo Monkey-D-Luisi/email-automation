@@ -52,6 +52,12 @@ public sealed class PostgresFixture : IAsyncLifetime
             ConnectionString = connection.ConnectionString;
             await using var context = CreateContext();
             await context.Database.MigrateAsync();
+            await context.Database.OpenConnectionAsync();
+            await using var constraintCommand = context.Database.GetDbConnection().CreateCommand();
+            constraintCommand.CommandText = "SELECT pg_get_constraintdef(oid) FROM pg_constraint WHERE conname = 'ck_work_item_audit_action' AND connamespace = current_schema()::regnamespace";
+            var auditConstraint = (string?)await constraintCommand.ExecuteScalarAsync();
+            if (auditConstraint?.Contains("GmailDraftExportRequested", StringComparison.Ordinal) != true)
+                throw new InvalidOperationException("The test schema did not apply the Gmail draft export audit constraint migration.");
         }
         finally
         {

@@ -223,6 +223,116 @@ namespace SmartInbox.Infrastructure.Persistence.Migrations
                         });
                 });
 
+            modelBuilder.Entity("SmartInbox.Infrastructure.WorkItems.Persistence.GmailDraftExportRecord", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<int>("ApprovedRevision")
+                        .HasColumnType("integer");
+
+                    b.Property<int>("AttemptCount")
+                        .HasColumnType("integer");
+
+                    b.Property<Guid?>("AttemptId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("Body")
+                        .IsRequired()
+                        .HasMaxLength(20000)
+                        .HasColumnType("character varying(20000)");
+
+                    b.Property<DateTimeOffset?>("ClaimedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTimeOffset?>("CompletedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("ContentFingerprint")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("DestinationMailboxId")
+                        .IsRequired()
+                        .HasMaxLength(256)
+                        .HasColumnType("character varying(256)");
+
+                    b.Property<Guid>("DraftId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("DraftRevisionId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("FailureKind")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<string>("GmailDraftId")
+                        .HasMaxLength(512)
+                        .HasColumnType("character varying(512)");
+
+                    b.Property<DateTimeOffset?>("LeaseExpiresAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("RecipientEmail")
+                        .IsRequired()
+                        .HasMaxLength(320)
+                        .HasColumnType("character varying(320)");
+
+                    b.Property<string>("RequestedBy")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("character varying(128)");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)");
+
+                    b.Property<string>("Subject")
+                        .IsRequired()
+                        .HasMaxLength(998)
+                        .HasColumnType("character varying(998)");
+
+                    b.Property<DateTimeOffset>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid>("WorkItemId")
+                        .HasColumnType("uuid");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("Status", "CreatedAt")
+                        .HasDatabaseName("ix_gmail_draft_exports_status_created_at");
+
+                    b.HasIndex("WorkItemId", "CreatedAt")
+                        .HasDatabaseName("ix_gmail_draft_exports_work_item_created_at");
+
+                    b.HasIndex("DraftId", "ApprovedRevision", "DestinationMailboxId", "RecipientEmail")
+                        .IsUnique()
+                        .HasDatabaseName("ux_gmail_draft_exports_draft_revision_destination_recipient");
+
+                    b.ToTable("gmail_draft_exports", null, t =>
+                        {
+                            t.HasCheckConstraint("ck_gmail_draft_exports_attempt_count", "\"AttemptCount\" >= 0");
+
+                            t.HasCheckConstraint("ck_gmail_draft_exports_content", "char_length(\"Subject\") BETWEEN 1 AND 998 AND char_length(\"Body\") BETWEEN 1 AND 20000");
+
+                            t.HasCheckConstraint("ck_gmail_draft_exports_fingerprint", "\"ContentFingerprint\" ~ '^[0-9a-f]{64}$'");
+
+                            t.HasCheckConstraint("ck_gmail_draft_exports_revision", "\"ApprovedRevision\" > 0");
+
+                            t.HasCheckConstraint("ck_gmail_draft_exports_state", "(\"Status\" = 'Pending' AND \"ClaimedAt\" IS NULL AND \"LeaseExpiresAt\" IS NULL AND \"CompletedAt\" IS NULL AND \"GmailDraftId\" IS NULL AND \"FailureKind\" IS NULL) OR (\"Status\" = 'InProgress' AND \"AttemptId\" IS NOT NULL AND \"ClaimedAt\" IS NOT NULL AND \"LeaseExpiresAt\" IS NOT NULL AND \"CompletedAt\" IS NULL AND \"GmailDraftId\" IS NULL AND \"FailureKind\" IS NULL) OR (\"Status\" = 'Succeeded' AND \"AttemptId\" IS NOT NULL AND \"ClaimedAt\" IS NULL AND \"LeaseExpiresAt\" IS NULL AND \"CompletedAt\" IS NOT NULL AND \"GmailDraftId\" IS NOT NULL AND \"FailureKind\" IS NULL) OR (\"Status\" IN ('Failed', 'NeedsReconciliation') AND \"AttemptId\" IS NOT NULL AND \"ClaimedAt\" IS NULL AND \"LeaseExpiresAt\" IS NULL AND \"CompletedAt\" IS NOT NULL AND \"GmailDraftId\" IS NULL AND \"FailureKind\" IS NOT NULL) OR (\"Status\" = 'Cancelled' AND \"ClaimedAt\" IS NULL AND \"LeaseExpiresAt\" IS NULL AND \"CompletedAt\" IS NOT NULL AND \"GmailDraftId\" IS NULL AND \"FailureKind\" IS NULL)");
+
+                            t.HasCheckConstraint("ck_gmail_draft_exports_status", "\"Status\" IN ('Pending', 'InProgress', 'Succeeded', 'Failed', 'NeedsReconciliation', 'Cancelled')");
+                        });
+                });
+
             modelBuilder.Entity("SmartInbox.Infrastructure.WorkItems.Persistence.ResponseDraftRecord", b =>
                 {
                     b.Property<Guid>("Id")
@@ -374,7 +484,7 @@ namespace SmartInbox.Infrastructure.Persistence.Migrations
 
                     b.ToTable("work_item_audit_entries", null, t =>
                         {
-                            t.HasCheckConstraint("ck_work_item_audit_action", "\"Action\" IN ('Created', 'ReviewStarted', 'CategoryCorrected', 'PriorityCorrected', 'NotesChanged', 'MissingInformationChanged', 'FactVerified', 'FactCorrected', 'FactRejected', 'DraftCreated', 'DraftEdited', 'DraftApproved', 'DraftRejected', 'Resolved')");
+                            t.HasCheckConstraint("ck_work_item_audit_action", "\"Action\" IN ('Created', 'ReviewStarted', 'CategoryCorrected', 'PriorityCorrected', 'NotesChanged', 'MissingInformationChanged', 'FactVerified', 'FactCorrected', 'FactRejected', 'DraftCreated', 'DraftEdited', 'DraftApproved', 'DraftRejected', 'GmailDraftExportRequested', 'GmailDraftExportClaimed', 'GmailDraftExportSucceeded', 'GmailDraftExportFailed', 'GmailDraftExportNeedsReconciliation', 'GmailDraftExportCancelled', 'GmailDraftExportRetryAuthorized', 'GmailDraftExportReconciled', 'Resolved')");
                         });
                 });
 
@@ -518,6 +628,15 @@ namespace SmartInbox.Infrastructure.Persistence.Migrations
                         .IsRequired();
 
                     b.Navigation("Message");
+                });
+
+            modelBuilder.Entity("SmartInbox.Infrastructure.WorkItems.Persistence.GmailDraftExportRecord", b =>
+                {
+                    b.HasOne("SmartInbox.Infrastructure.WorkItems.Persistence.WorkItemRecord", null)
+                        .WithMany()
+                        .HasForeignKey("WorkItemId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
                 });
 
             modelBuilder.Entity("SmartInbox.Infrastructure.WorkItems.Persistence.ResponseDraftRecord", b =>

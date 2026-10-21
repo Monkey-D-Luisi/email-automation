@@ -76,7 +76,10 @@ public static class ReviewerAuthenticationEndpoints
         return Results.NoContent();
     }
 
-    private static IResult GetSessionAsync(HttpContext context, EmailDraftingOptions draftingOptions)
+    private static IResult GetSessionAsync(
+        HttpContext context,
+        EmailDraftingOptions draftingOptions,
+        IOptions<GmailIntegrationOptions> gmailOptions)
     {
         context.Response.Headers.CacheControl = "no-store";
         return Results.Ok(new
@@ -84,6 +87,8 @@ public static class ReviewerAuthenticationEndpoints
             reviewerId = context.User.FindFirstValue(ClaimTypes.NameIdentifier),
             displayName = context.User.Identity?.Name,
             aiDraftingEnabled = draftingOptions.Enabled,
+            gmailDraftExportEnabled = gmailOptions.Value.Enabled,
+            gmailDraftExportMailboxId = gmailOptions.Value.Enabled ? gmailOptions.Value.MailboxId : null,
         });
     }
 }

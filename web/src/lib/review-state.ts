@@ -1,4 +1,4 @@
-import { ApiError } from "./api.ts";
+import { ApiError, type GmailDraftExport } from "./api.ts";
 
 export type LoadState<T> =
   | { status: "loading" }
@@ -28,6 +28,44 @@ export function canApproveDraft(
     persistedBody.trim().length > 0 &&
     persistedSubject === visibleSubject &&
     persistedBody === visibleBody;
+}
+
+export function canRequestGmailDraft(input: {
+  enabled: boolean;
+  workItemStatus: string;
+  reviewerOwnsItem: boolean;
+  revision: number | null;
+  revisionStatus: string | null;
+  persistedSubject: string | null;
+  persistedBody: string | null;
+  visibleSubject: string;
+  visibleBody: string;
+  savedRecipient: string | null;
+  confirmedRecipient: string;
+  recipientConfirmed: boolean;
+  exports: GmailDraftExport[];
+  mailboxId: string | null;
+}): boolean {
+  const eligible = input.enabled &&
+    input.workItemStatus === "InReview" &&
+    input.reviewerOwnsItem &&
+    input.revision !== null &&
+    input.revisionStatus === "Approved" &&
+    input.persistedSubject === input.visibleSubject &&
+    input.persistedBody === input.visibleBody &&
+    input.savedRecipient !== null &&
+    input.confirmedRecipient === input.savedRecipient &&
+    input.recipientConfirmed &&
+    input.mailboxId !== null;
+  if (!eligible) return false;
+  return !input.exports.some(exported =>
+    exported.approvedRevision === input.revision &&
+    exported.destinationMailboxId === input.mailboxId &&
+    exported.recipientEmail === input.savedRecipient);
+}
+
+export function canManuallyResolveGmailDraftExport(status: string): boolean {
+  return status === "Failed" || status === "NeedsReconciliation";
 }
 
 export function mutationFailure(error: unknown): { stale: boolean; message: string } {

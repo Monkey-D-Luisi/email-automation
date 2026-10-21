@@ -16,9 +16,9 @@ Current limits: one configured reviewer, localhost/synthetic data only, and no r
 
 ## Phase 4 — Integrations
 
-- Treat an approved internal draft revision as an input requiring a separate authorization and execution workflow; approval alone must never send it.
-- Before Gmail/Outlook or n8n integration, define idempotency keys, least-privilege scopes, recipient verification, outbound content confirmation, retries, rate limits, delivery receipts, revocation, and audit linkage to the approved revision.
-- Do not persist provider tokens without encryption, rotation, and secret-handling controls. Keep external draft creation and sending behind a separate, explicit Phase 4 action.
+Implemented locally: one-configured-mailbox Gmail ingestion through n8n, a PostgreSQL-backed approved-draft export intent and lease, separate integration tokens, manual reconciliation after ambiguous Gmail results, reviewer-confirmed recipient/mailbox, and an inactive Gmail Draft/Create workflow. Both live paths are disabled by default; no send operation exists. Gmail compose OAuth itself permits sending, and Gmail reply threading remains unsupported. See `integrations/n8n/README.md` for activation and limitations.
+
+Remaining before real use: authorize a dedicated test mailbox, verify both OAuth credentials resolve to the configured mailbox, and perform the separately approved create-only Gmail acceptance. Do not use customer data or expose the local services publicly.
 
 ## Phase 5 — Safe operations
 
