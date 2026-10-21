@@ -2,6 +2,7 @@ using FluentValidation;
 using Microsoft.AspNetCore.Diagnostics;
 using Microsoft.AspNetCore.Mvc;
 using SmartInbox.Application.Messages.ReceiveInboundMessage;
+using SmartInbox.Application.WorkItems.Models;
 
 namespace SmartInbox.API.Errors;
 
@@ -29,6 +30,45 @@ public sealed class ApiExceptionHandler(ILogger<ApiExceptionHandler> logger) : I
                 Title = "External message ID conflict",
                 Detail = "The external message ID already exists with different content.",
                 Status = StatusCodes.Status409Conflict,
+            },
+            WorkItemNotFoundException or WorkItemFactNotFoundException => new ProblemDetails
+            {
+                Type = "https://smartinbox.local/problems/work-item-not-found",
+                Title = "Work item or reviewed fact not found",
+                Status = StatusCodes.Status404NotFound,
+            },
+            WorkItemConcurrencyException => new ProblemDetails
+            {
+                Type = "https://smartinbox.local/problems/work-item-concurrency-conflict",
+                Title = "Work item has changed",
+                Detail = exception.Message,
+                Status = StatusCodes.Status409Conflict,
+            },
+            WorkItemStateConflictException => new ProblemDetails
+            {
+                Type = "https://smartinbox.local/problems/invalid-work-item-state",
+                Title = "The requested work item action is not allowed",
+                Detail = exception.Message,
+                Status = StatusCodes.Status409Conflict,
+            },
+            WorkItemValidationException => new ProblemDetails
+            {
+                Type = "https://smartinbox.local/problems/invalid-work-item-input",
+                Title = "Work item input is invalid",
+                Detail = exception.Message,
+                Status = StatusCodes.Status400BadRequest,
+            },
+            DraftingDisabledException => new ProblemDetails
+            {
+                Type = "https://smartinbox.local/problems/ai-drafting-disabled",
+                Title = "AI-assisted drafting is disabled",
+                Status = StatusCodes.Status409Conflict,
+            },
+            DraftProposalException => new ProblemDetails
+            {
+                Type = "https://smartinbox.local/problems/draft-proposal-failed",
+                Title = "The AI response draft could not be generated",
+                Status = StatusCodes.Status502BadGateway,
             },
             BadHttpRequestException { StatusCode: StatusCodes.Status400BadRequest } => new ProblemDetails
             {

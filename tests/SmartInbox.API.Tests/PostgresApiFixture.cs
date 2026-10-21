@@ -85,6 +85,9 @@ public sealed class PostgresApiFixture : IAsyncLifetime
                 {
                     ["ConnectionStrings:Database"] = ConnectionString,
                     ["ServiceAuthentication:Token"] = TestToken,
+                    ["ReviewAuthentication:Password"] = "synthetic-reviewer-password-for-tests-0123456789",
+                    ["ReviewAuthentication:ReviewerId"] = "reviewer-1",
+                    ["ReviewAuthentication:DisplayName"] = "Synthetic reviewer",
                 }));
             builder.ConfigureTestServices(ConfigureTestDatabase);
         });
@@ -108,7 +111,7 @@ public sealed class PostgresApiFixture : IAsyncLifetime
         Client.DefaultRequestHeaders.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", TestToken);
     }
 
-    public HttpClient CreateClient() => factory?.CreateClient()
+    public HttpClient CreateClient() => factory?.CreateClient(new WebApplicationFactoryClientOptions { HandleCookies = true })
         ?? throw new InvalidOperationException("The API test host has not been initialized.");
 
     public (WebApplicationFactory<Program> Host, HttpClient Client) CreateProcessingHost(IEmailAnalysisProvider provider)
@@ -120,6 +123,9 @@ public sealed class PostgresApiFixture : IAsyncLifetime
                 {
                     ["ConnectionStrings:Database"] = ConnectionString,
                     ["ServiceAuthentication:Token"] = TestToken,
+                    ["ReviewAuthentication:Password"] = "synthetic-reviewer-password-for-tests-0123456789",
+                    ["ReviewAuthentication:ReviewerId"] = "reviewer-1",
+                    ["ReviewAuthentication:DisplayName"] = "Synthetic reviewer",
                     ["EmailProcessing:Enabled"] = "true",
                     ["EmailProcessing:PollIntervalSeconds"] = "1",
                     ["OpenAI:ApiKey"] = "synthetic-test-credential",
@@ -131,7 +137,7 @@ public sealed class PostgresApiFixture : IAsyncLifetime
                 services.AddSingleton(provider);
             });
         });
-        var client = processingFactory.CreateClient();
+        var client = processingFactory.CreateClient(new WebApplicationFactoryClientOptions { HandleCookies = true });
         client.DefaultRequestHeaders.Authorization =
             new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", TestToken);
         return (processingFactory, client);
@@ -144,7 +150,7 @@ public sealed class PostgresApiFixture : IAsyncLifetime
                 .MigrationsAssembly(typeof(AppDbContext).Assembly.FullName)
                 .MigrationsHistoryTable("__EFMigrationsHistory", schemaName))
             .Options);
-        await context.Database.ExecuteSqlRawAsync("TRUNCATE TABLE email_classifications, inbound_messages CASCADE");
+            await context.Database.ExecuteSqlRawAsync("TRUNCATE TABLE email_classifications, inbound_messages CASCADE");
     }
 
     private void ConfigureTestDatabase(IServiceCollection services)
