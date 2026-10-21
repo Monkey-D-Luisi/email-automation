@@ -10,15 +10,15 @@ Implemented locally: optional background classification for persisted messages, 
 
 ## Phase 3 — Human review and drafts
 
-- Add a review queue and draft/work item only after defining ownership and retention.
-- Record reviewer identity, decisions, edits, and audit history.
-- Keep sending outside the workflow until permissions and approval policy are agreed.
+Implemented locally: transactional work-item creation and backfill, immutable original classifications, reviewer-owned corrections and fact verification, optimistic concurrency, append-only audit entries, and versioned response drafts with explicit approval or rejection. The single local reviewer signs in with a server-configured secret and cookie session. The Next.js 16.4.2 App Router panel provides the review queue and history. Optional AI draft proposals remain disabled by default and always require explicit reviewer action. Approval does not create an external draft or send email.
+
+Current limits: one configured reviewer, localhost/synthetic data only, and no retention or deletion scheduler. The automated API acceptance flow uses a fake classifier and local PostgreSQL; a live local browser walkthrough is recorded in `docs/HANDOFF.md`. No real provider or hosted acceptance was performed.
 
 ## Phase 4 — Integrations
 
-- Add email connectors only with least-privilege permissions and verified webhook handling.
-- Establish connector retries, rate limits, and traceability.
-- Do not persist provider tokens without an encryption and rotation plan.
+- Treat an approved internal draft revision as an input requiring a separate authorization and execution workflow; approval alone must never send it.
+- Before Gmail/Outlook or n8n integration, define idempotency keys, least-privilege scopes, recipient verification, outbound content confirmation, retries, rate limits, delivery receipts, revocation, and audit linkage to the approved revision.
+- Do not persist provider tokens without encryption, rotation, and secret-handling controls. Keep external draft creation and sending behind a separate, explicit Phase 4 action.
 
 ## Phase 5 — Safe operations
 

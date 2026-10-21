@@ -151,6 +151,46 @@ OpenAI pricing is not assumed. When token usage and matching model rates are con
 
 Ingestion limits are: HTTP body size of 65,536 bytes, body text of 40,000 characters, subject of 998 characters, external IDs of 512 characters, and mailbox ID of 256 characters. Other limits are defined in `InboundMessageLimits` and validated before persistence.
 
+## Human review and response drafts
+
+Every successful classification creates one `WorkItem` in the same PostgreSQL transaction that marks the message `Processed`. Failed and in-flight messages do not enter the queue. Existing processed messages are backfilled by the additive `AddHumanReviewAndDrafts` migration. The lifecycle is `PendingReview → InReview → Resolved`; the original AI classification and `RequiresReview` signal remain unchanged.
+
+Reviewers can correct category and priority, edit missing-information notes, and verify, correct, or reject typed extracted facts. Extracted facts start unverified, and correcting one resets its verification. A work item cannot be resolved while any fact remains unverified. Each successful change writes a bounded audit summary and increments the optimistic concurrency version in the same transaction. Mutations must include `expectedVersion`; stale versions return `409 Conflict` and are never silently overwritten.
+
+There is one internal response draft per work item. Saving edits appends an immutable numbered revision. Approval and rejection record the authenticated reviewer and apply only to the current revision. Editing an approved draft creates a new unapproved revision while preserving the prior approval. Approval never sends an email and never creates a Gmail or Outlook draft.
+
+### Local reviewer authentication
+
+The API has one configured local reviewer. The stable reviewer ID and display name are server configuration; the browser cannot supply either as proof of identity. Store the password in User Secrets (or an environment variable), not in the repository:
+
+```powershell
+$reviewPassword = [Convert]::ToHexString([System.Security.Cryptography.RandomNumberGenerator]::GetBytes(32))
+dotnet user-secrets set 'ReviewAuthentication:ReviewerId' 'local-reviewer' --project 'src/SmartInbox.API/SmartInbox.API.csproj'
+dotnet user-secrets set 'ReviewAuthentication:DisplayName' 'Local reviewer' --project 'src/SmartInbox.API/SmartInbox.API.csproj'
+dotnet user-secrets set 'ReviewAuthentication:Password' $reviewPassword --project 'src/SmartInbox.API/SmartInbox.API.csproj'
+Remove-Variable reviewPassword
+```
+
+The reviewer session is a one-hour, non-persistent `HttpOnly`, `SameSite=Strict` cookie. Login, logout, and review mutations require ASP.NET Core antiforgery validation. The existing service bearer token still protects message ingestion and cannot satisfy the human-review policy. This is a single-operator localhost mechanism, not multi-user identity management.
+
+### Run the web panel
+
+The web panel uses Next.js 16.4.2, TypeScript, and the App Router. Next.js requires Node.js 20.9 or later. Its same-origin rewrite forwards `/api/*` to `http://127.0.0.1:5168` by default; set `SMARTINBOX_API_ORIGIN` on the Next.js server process if the API listens elsewhere. No service token or provider key is sent to browser code.
+
+After applying migrations and starting the API as above, open another PowerShell terminal:
+
+```powershell
+Push-Location web
+npm install
+npm run dev
+```
+
+Open `http://127.0.0.1:3000` and sign in with the configured reviewer password. The panel provides status, priority, and category filters, pagination, original AI analysis, processing diagnostics, fact review, notes, draft revisions and decisions, and audit history. Email bodies render as escaped plain text. AI draft proposals are hidden unless the server's `EmailDrafting:Enabled` setting is true; enabling it also requires the existing OpenAI key and can incur charges. AI proposals are saved as unapproved revisions.
+
+The backend integration test `WorkItemEndpointsTests.Reviewer_can_correct_verify_draft_approve_resolve_and_inspect_audit` runs the full workflow with a fake classifier and synthetic email: ingestion, classification, correction, fact verification, draft creation/edit/approval, resolution, and audit inspection. It uses an isolated PostgreSQL schema, makes no provider call, and sends no email. The Next.js app itself is build-checked; a live browser walkthrough is not part of the automated test suite. To populate a local panel, use a successfully classified synthetic message already in the configured database; the default-disabled worker intentionally does not classify new messages.
+
+Review history and message content remain in PostgreSQL until the operator removes them. Deletion, retention schedules, encryption at rest, credential rotation, and multi-reviewer access controls are not implemented. Use synthetic data on localhost only.
+
 ## Tests, build, and package audit
 
 Integration tests use PostgreSQL on localhost. The connection string must target a dedicated database whose name ends in `_test`; Compose creates `smartinbox_test`. Each test fixture creates and removes its own uniquely named schema inside that database, leaving other schemas untouched.
@@ -163,6 +203,11 @@ dotnet build SmartInbox.sln --configuration Release --no-restore
 dotnet test SmartInbox.sln --configuration Release --no-build --no-restore
 dotnet list SmartInbox.sln package --vulnerable --include-transitive
 Remove-Item Env:SMARTINBOX_TEST_CONNECTION_STRING
+Push-Location web
+npm test
+npm run build
+npm audit
+Pop-Location
 ```
 
 `dotnet tool restore` installs the pinned `dotnet-ef` version. GitHub Actions runs restore, Release build, unit and PostgreSQL integration tests, and a NuGet package audit. It does not use real credentials or external providers. Automated tests use fake provider responses and never call OpenAI.

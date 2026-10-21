@@ -1,47 +1,49 @@
-# Handoff — Smart Inbox Automation, Phase 2
+# Handoff — Smart Inbox Automation, Phase 3
 
 ## Status
 
-Phase 2 adds optional AI-assisted classification to the existing local application. It keeps the Phase 1 ingestion API and PostgreSQL idempotency behavior, adds a bounded domain classification value, an application validation policy, an OpenAI Responses provider, and an opt-in PostgreSQL-backed background worker. No email actions, frontend, external mailbox connectors, or additional AI providers are implemented.
+Phase 3 is implemented and verified locally on `feature/human-review-and-drafts`, based on `40e5c1a` (`Fix Phase 2 classification review gaps`). It has not been pushed, deployed, or published. Phase 1/2 ingestion, classification, leases, retries, and original API contracts remain in place.
 
-The intended local branch is `feature/ai-email-classification`. This work has not been pushed and no pull request has been opened. Synthetic data and fake provider responses were used for automated verification. No billable OpenAI requests were made; model/API integration has not been live-verified with an account.
+The review workflow uses a separate `WorkItem` aggregate. Successful classification creates the item and its initial audit event transactionally; the new migration also backfills existing processed messages. Human changes never overwrite the original classification. Verified facts, reviewer notes, versioned internal drafts, decisions, and append-only audit summaries are persisted independently. A local configured reviewer authenticates with an expiring cookie session and antiforgery protection. Approval does not send an email or create an external draft.
+
+The `web/` Next.js 16.4.2 App Router panel supports reviewer sign-in, inbox filters and pagination, detail inspection, fact review, corrections, notes, draft revision/edit/approval/rejection, and audit history. Optional AI draft generation is disabled by default. The web server proxies same-origin API requests; service and provider secrets are not included in the client bundle.
 
 ## Verification
 
-- `dotnet restore SmartInbox.sln`: succeeded; all projects were up to date.
-- `dotnet build SmartInbox.sln --configuration Release --no-restore`: succeeded with 0 warnings and 0 errors.
-- `dotnet test SmartInbox.sln --configuration Release --no-build --no-restore`: **69/69 passed** — Domain 6, Application 31, Infrastructure 24, API 8. PostgreSQL integration tests ran against local PostgreSQL 17 using isolated schemas.
-- `dotnet list SmartInbox.sln package --vulnerable --include-transitive`: no vulnerable packages reported by the configured NuGet sources.
-- `dotnet ef migrations has-pending-model-changes`: no pending model changes.
-- GitHub-hosted CI and live provider requests: not run.
+- `dotnet restore SmartInbox.sln`: passed.
+- `dotnet build SmartInbox.sln --configuration Release --no-restore`: passed with 0 warnings and 0 errors.
+- `dotnet test SmartInbox.sln --configuration Release`: **98/98 passed** — Domain 10, Application 46, Infrastructure 30, API 12. Tests used fake providers and synthetic messages; PostgreSQL integration tests ran against local PostgreSQL 17 in `smartinbox_test` with isolated schemas.
+- Work-item PostgreSQL coverage includes one-to-one uniqueness, concurrent duplicate initialization, atomic review/audit persistence, stale-version rejection, fresh-context draft revision persistence, and migration backfill of preexisting processed messages.
+- API acceptance test `Reviewer_can_correct_verify_draft_approve_resolve_and_inspect_audit` exercised ingestion through a fake classifier, reviewer correction, fact verification, draft creation/edit/approval, resolution, and history. It also confirmed a retried stale approval conflicts without duplicate approval history.
+- `dotnet ef migrations has-pending-model-changes`: passed; no pending model changes.
+- `dotnet list SmartInbox.sln package --vulnerable --include-transitive`: no vulnerable NuGet packages reported by configured sources.
+- In `web/`, `npm test`: 2/2 passed (Node emitted its experimental type-stripping warning); `npm run build`: passed; `npm audit`: 0 vulnerabilities.
+- No live OpenAI calls, outbound email actions, hosted CI run, or production/deployment check was performed.
 
-Integration tests require `SMARTINBOX_TEST_CONNECTION_STRING` to point to a localhost PostgreSQL database whose name ends in `_test`. Each test fixture uses its own isolated schema and drops that schema at fixture shutdown. Tests use fake provider responses and do not require credentials.
+The previous handoff's `69/69` total was stale. Repository verification at the requested Phase 3 starting revision was `81` tests (Domain 6, Application 42, Infrastructure 25, API 8); Phase 3 adds 17 tests for the current verified total of 98.
 
-## Local setup and controlled provider evaluation
+## Live local browser walkthrough — 2026-10-21
 
-Start PostgreSQL and configure the database and service token as described in [README.md](../README.md). Apply migrations explicitly before starting the API:
+- Started PostgreSQL with the documented Compose setup and applied migrations to isolated schema `phase3_walkthrough_1792587462456_dd192y` inside `smartinbox_dev`. Started the API on `127.0.0.1:5168` and Next.js on `127.0.0.1:5169`.
+- Windows returned `EACCES` when Next.js tried ports 3000 and 3001; neither port had a listener. The documented `npm run dev` command could not bind on 3000, so the local Next CLI was started directly on port 5169. The normal port remains 3000 in the project scripts.
+- Configured the local `local-reviewer` identity in User Secrets for the walkthrough because no reviewer password was configured. The password was generated locally and was not written to the repository.
+- Ingested two synthetic messages and processed both through a temporary fake analyzer. Their stored metrics reported provider `fake`, model `walkthrough-fake`. No OpenAI or other provider call was made.
+- The inbox displayed both records with the fake provider's expected category and priority and a `Needs attention` indicator. For the invoice item, the original AI classification remained `SalesInquiry` / `Normal`; the effective review values changed to `BillingDocument` / `High` and later to `Urgent` during concurrency testing. Reviewer notes and missing-information entries saved successfully. The invoice-number fact was verified and the order-reference fact was rejected, each with an audit entry.
+- Manually created draft revision 1, edited it into revision 2, and approved revision 2. Editing again created revision 3 with state `Draft`; the audit still recorded revision 2 as approved and revision 3 as unapproved. On the support item, manual draft revision 1 was rejected with feedback `Needs a human reply after device verification.` The UI showed `Rejected · v1`, the reviewer, feedback, and a `Draft Rejected` audit entry.
+- Restarted both the API and Next.js. The reviewer session remained valid, and the invoice audit history, revision decisions, support draft rejection, and its feedback loaded from PostgreSQL after restart.
+- Logout returned `204` and redirected to sign-in. Unauthenticated reviewer-session and work-item requests returned `401`. A review mutation without an antiforgery header returned `400` (`Request verification failed`) and did not change the saved version. Session expiry was simulated by expiring the browser's HttpOnly reviewer cookie; the UI redirected to `/login` and the session endpoint returned `401`. The configured one-hour ticket lifetime was not allowed to elapse in real time.
+- For browser concurrency, one tab loaded version 8 while another saved version 9. The stale tab received `409`, showed the conflict message and reload action, and disabled edits. A separately authenticated local HTTP session also attempted a version-9 update after the current version had advanced to 10; it received `409`. A fresh read remained version 10 with category `BillingDocument` and priority `High`.
+- At a 390×844 viewport, the inbox and work-item details stacked vertically and the document had no horizontal overflow (375 px document width and client width). The browser request list contained only localhost resources; no Gmail, Outlook, n8n, or external provider endpoints were contacted, and no email or external draft was created.
+- The initial page load exposed a missing favicon (`404`); added `web/src/app/icon.svg`, and its generated `/icon.svg` URL returned `200`. The other observed non-2xx results were the intentional `401`, `400`, and `409` security/concurrency cases. A transient Next.js development HMR WebSocket refusal appeared around server restart/context switching; subsequent page loads and local requests succeeded.
 
-```powershell
-dotnet tool restore
-dotnet ef database update --project 'src/SmartInbox.Infrastructure/SmartInbox.Infrastructure.csproj' --startup-project 'src/SmartInbox.API/SmartInbox.API.csproj'
-```
+## Local setup
 
-The worker defaults to disabled and the API can ingest and retrieve messages without an OpenAI credential. For a future controlled live evaluation, first confirm the provider and model account availability, then put the key in User Secrets or the process environment, set `EmailAnalysis:Provider=openai`, select the model under `OpenAI:Model`, review the bounded retry/concurrency/timeout limits, and explicitly set `EmailProcessing:Enabled=true`. A protected synthetic message can then be submitted through `POST /api/v1/messages`; poll `GET /api/v1/messages/{id}` for its classification and safe processing state. That evaluation can incur API charges. Do not use real customer email for this demo.
+Follow [README.md](../README.md) for PostgreSQL, User Secrets, migration application, reviewer password configuration, backend startup, and `web/` startup. The worker remains disabled by default. New messages will not appear in the review queue until they are successfully classified; no AI request is required by the automated end-to-end test.
 
-The automated evaluation harness in `tests/SmartInbox.Application.Tests/Messages/Classification/synthetic-emails.jsonl` contains 31 synthetic cases. It applies deterministic validation to fixed candidate outputs; it is not a live model quality benchmark.
+PostgreSQL integration tests require `SMARTINBOX_TEST_CONNECTION_STRING` to point to a localhost database ending in `_test`. Each fixture creates and drops an isolated schema. The API acceptance test substitutes a fake classifier and uses the same local database fixture.
 
-## Design and operational limits
+## Limits and Phase 4
 
-- Each message has at most one current classification. A retryable failure stores its kind, safe message, next attempt time, and attempt count.
-- PostgreSQL claims work with `FOR UPDATE SKIP LOCKED` and an expiring owner lease. Completion requires the current owner, preventing a reclaimed message's stale worker from overwriting the result.
-- Provider I/O occurs outside database transactions. Completion writes the classification and processed state atomically.
-- Invoice and order identifiers, amounts, currencies, and requested dates extracted from message text are marked as unverified business facts and require human review. A value appearing in the source does not verify its meaning; downstream use must preserve that distinction.
-- Transient connectivity, rate limits, and timeouts retry up to the configured limit. Permanent provider/authentication/schema errors stop without automatic retries.
-- Available metrics preserve the latest provider call telemetry and total attempt count; the database does not retain a full per-attempt history. Estimated cost remains unknown unless model pricing is configured.
-- Processing is at-least-once around external provider I/O. A crash or completion-persistence failure after an OpenAI response can repeat that in-flight request after lease expiry, potentially incurring another charge. The worker is disabled by default; keep it disabled except for controlled runs, and use low retry/concurrency limits while monitoring provider usage. Committed classifications and duplicate submissions do not trigger another analysis.
-- Email content is stored as plain text. The shared service token does not provide user identity, mailbox-level authorization, rotation, or audit history.
-- The OpenAI SDK adapter is covered by fake-client tests. Credentials, model entitlement, network connectivity, and live structured output have not been tested.
+This is a single-reviewer localhost demo using synthetic data. It has no retention/deletion scheduler, multi-user identity administration, rate limiting, or production TLS deployment. The one-hour cookie expiry was simulated in the browser rather than observed after waiting an hour; Next.js also required a local port override on this Windows host. Email bodies and audit history persist in PostgreSQL until the operator removes them; source deletion cascades to related review data. Do not use real customer data or expose the service publicly.
 
-## Preparation for Phase 3
-
-Keep classification immutable once processed. Phase 3 can add a human review queue and proposed drafts or work items, with explicit reviewer identity, approval state, and audit history. No sending, forwarding, CRM write, or other external action should be triggered by a classification alone.
+Phase 4 must introduce a distinct, authorized execution step for any external draft creation or sending. It will need recipient verification, least-privilege provider scopes, idempotency, delivery receipts, revocation, bounded retries, and audit linkage to the exact approved revision. Current approval alone must never execute an external action.
