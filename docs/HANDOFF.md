@@ -2,7 +2,7 @@
 
 ## Status
 
-Phase 3 is implemented and verified locally on `feature/human-review-and-drafts`, based on `40e5c1a` (`Fix Phase 2 classification review gaps`). It has not been pushed, deployed, or published. Phase 1/2 ingestion, classification, leases, retries, and original API contracts remain in place.
+Phase 3 is implemented and verified locally on `feature/human-review-and-drafts`, based on `40e5c1a` (`Fix Phase 2 classification review gaps`). The targeted acceptance fixes for provider-call authorization, unsaved fact verification, exact-revision draft approval, and frontend CI are included in the current local commit. It has not been pushed, deployed, or published. Phase 1/2 ingestion, classification, leases, retries, and original API contracts remain in place.
 
 The review workflow uses a separate `WorkItem` aggregate. Successful classification creates the item and its initial audit event transactionally; the new migration also backfills existing processed messages. Human changes never overwrite the original classification. Verified facts, reviewer notes, versioned internal drafts, decisions, and append-only audit summaries are persisted independently. A local configured reviewer authenticates with an expiring cookie session and antiforgery protection. Approval does not send an email or create an external draft.
 
@@ -12,15 +12,16 @@ The `web/` Next.js 16.4.2 App Router panel supports reviewer sign-in, inbox filt
 
 - `dotnet restore SmartInbox.sln`: passed.
 - `dotnet build SmartInbox.sln --configuration Release --no-restore`: passed with 0 warnings and 0 errors.
-- `dotnet test SmartInbox.sln --configuration Release`: **98/98 passed** — Domain 10, Application 46, Infrastructure 30, API 12. Tests used fake providers and synthetic messages; PostgreSQL integration tests ran against local PostgreSQL 17 in `smartinbox_test` with isolated schemas.
+- `dotnet test SmartInbox.sln --configuration Release --no-build --no-restore`: **101/101 passed** — Domain 10, Application 49, Infrastructure 30, API 12. Tests used fake providers and synthetic messages; PostgreSQL integration tests ran against local PostgreSQL 17 in `smartinbox_test` with isolated schemas.
 - Work-item PostgreSQL coverage includes one-to-one uniqueness, concurrent duplicate initialization, atomic review/audit persistence, stale-version rejection, fresh-context draft revision persistence, and migration backfill of preexisting processed messages.
 - API acceptance test `Reviewer_can_correct_verify_draft_approve_resolve_and_inspect_audit` exercised ingestion through a fake classifier, reviewer correction, fact verification, draft creation/edit/approval, resolution, and history. It also confirmed a retried stale approval conflicts without duplicate approval history.
 - `dotnet ef migrations has-pending-model-changes`: passed; no pending model changes.
 - `dotnet list SmartInbox.sln package --vulnerable --include-transitive`: no vulnerable NuGet packages reported by configured sources.
-- In `web/`, `npm test`: 2/2 passed (Node emitted its experimental type-stripping warning); `npm run build`: passed; `npm audit`: 0 vulnerabilities.
-- No live OpenAI calls, outbound email actions, hosted CI run, or production/deployment check was performed.
+- In `web/`, `npm ci` installed 29 packages and found 0 vulnerabilities; `npm test`: **4/4 passed** (Node emitted its experimental type-stripping warning); `npm run build`: passed; `npm audit`: 0 vulnerabilities.
+- `.github/workflows/ci.yml` now has a Node 22 job for `npm ci`, frontend tests, production build, and `npm audit`. The workflow was not run by GitHub because this change remains local.
+- No live OpenAI calls, outbound email actions, or production/deployment checks were performed.
 
-The previous handoff's `69/69` total was stale. Repository verification at the requested Phase 3 starting revision was `81` tests (Domain 6, Application 42, Infrastructure 25, API 8); Phase 3 adds 17 tests for the current verified total of 98.
+The Phase 3 baseline before this follow-up was 98 .NET tests (Domain 10, Application 46, Infrastructure 30, API 12) and 2 frontend tests. This follow-up adds three backend theory cases and two frontend regression cases, bringing the verified totals to 101 .NET tests and 4 frontend tests.
 
 ## Live local browser walkthrough — 2026-10-21
 
@@ -35,6 +36,16 @@ The previous handoff's `69/69` total was stale. Repository verification at the r
 - For browser concurrency, one tab loaded version 8 while another saved version 9. The stale tab received `409`, showed the conflict message and reload action, and disabled edits. A separately authenticated local HTTP session also attempted a version-9 update after the current version had advanced to 10; it received `409`. A fresh read remained version 10 with category `BillingDocument` and priority `High`.
 - At a 390×844 viewport, the inbox and work-item details stacked vertically and the document had no horizontal overflow (375 px document width and client width). The browser request list contained only localhost resources; no Gmail, Outlook, n8n, or external provider endpoints were contacted, and no email or external draft was created.
 - The initial page load exposed a missing favicon (`404`); added `web/src/app/icon.svg`, and its generated `/icon.svg` URL returned `200`. The other observed non-2xx results were the intentional `401`, `400`, and `409` security/concurrency cases. A transient Next.js development HMR WebSocket refusal appeared around server restart/context switching; subsequent page loads and local requests succeeded.
+
+## Targeted acceptance follow-up — 2026-10-21
+
+- Reused the two synthetic messages in `phase3_walkthrough_1792587462456_dd192y`; their stored classification metrics identify provider `fake`, model `walkthrough-fake`. Started the API on `127.0.0.1:5168` and the Next.js dev server on `127.0.0.1:5169` with PostgreSQL connected to that schema. Email processing and AI draft generation were disabled for this run.
+- Signed in as the configured local reviewer. The inbox showed both messages with the expected effective category and priority plus `Needs attention`. The invoice detail showed its original AI values (`SalesInquiry` / `Normal`) separately from reviewed values (`BillingDocument` / `High`).
+- On the support item, changed the visible unverified `ProductOrService` value from `MODEL-7` to `MODEL-8` without saving. The browser showed “Save the correction before verifying this fact.” and disabled Verify. Clicking Correct persisted `MODEL-8` while leaving the fact `Unverified`; Verify then became available. Explicit verification changed it to `Verified` and added a `FactVerified` history entry. PostgreSQL confirmed the saved value and status.
+- On the invoice item, edited the visible body of Draft revision 3 without saving. Approval was disabled and the UI showed “Unsaved changes are not part of the saved revision. Save a new revision before approval.” Saving created Draft revision 4; the visible text matched its persisted subject/body, so approval became available. Approving it produced `Approved · v4` and a `DraftApproved` history entry. PostgreSQL confirmed revision 4 is Approved and its body is the exact saved text.
+- The browser network list contained only localhost requests. The two console errors were the expected initial unauthenticated `/reviewer/session` `401` responses before login; all subsequent API requests succeeded, with no other failed requests or browser warnings. No Gmail, Outlook, n8n, AI-provider, or external email endpoint was contacted; no external email or draft was created.
+- At a 390×844 viewport, `document.documentElement.scrollWidth` was 375 px, so the page had no horizontal overflow.
+- The synthetic walkthrough changes remain in that local schema for inspection: the support `ProductOrService` fact is `MODEL-8` / `Verified`, and invoice draft revision 4 is `Approved`.
 
 ## Local setup
 

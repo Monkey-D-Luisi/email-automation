@@ -210,7 +210,7 @@ npm audit
 Pop-Location
 ```
 
-`dotnet tool restore` installs the pinned `dotnet-ef` version. GitHub Actions runs restore, Release build, unit and PostgreSQL integration tests, and a NuGet package audit. It does not use real credentials or external providers. Automated tests use fake provider responses and never call OpenAI.
+`dotnet tool restore` installs the pinned `dotnet-ef` version. GitHub Actions runs restore, Release build, unit and PostgreSQL integration tests, a NuGet package audit, and a separate Node 22 frontend job with `npm ci`, `npm test`, `npm run build`, and `npm audit`. The workflow does not use real credentials or external providers. Automated tests use fake provider responses and never call OpenAI.
 
 ## Security and privacy
 

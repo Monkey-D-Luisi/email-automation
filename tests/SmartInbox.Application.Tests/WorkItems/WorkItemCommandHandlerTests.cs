@@ -41,6 +41,40 @@ public sealed class WorkItemCommandHandlerTests
         await proposer.DidNotReceive().ProposeAsync(Arg.Any<DraftProposalContext>(), Arg.Any<CancellationToken>());
     }
 
+    [Theory]
+    [InlineData(WorkItemStatus.PendingReview)]
+    [InlineData(WorkItemStatus.Resolved)]
+    [InlineData(WorkItemStatus.InReview)]
+    public async Task Draft_proposal_is_not_requested_when_work_item_is_not_editable_by_reviewer(WorkItemStatus status)
+    {
+        var workItems = Substitute.For<IWorkItemRepository>();
+        var messages = Substitute.For<IInboundMessageRepository>();
+        var proposer = Substitute.For<IResponseDraftProposer>();
+        var classification = Classification();
+        var item = WorkItem.Create(Guid.NewGuid(), classification, Now);
+        if (status != WorkItemStatus.PendingReview)
+            item.StartReview(status == WorkItemStatus.InReview ? "reviewer-2" : "reviewer-1", Now.AddMinutes(1));
+        if (status == WorkItemStatus.Resolved)
+        {
+            foreach (var fact in item.Facts)
+                item.RejectFact(fact.Id, "reviewer-1", Now.AddMinutes(2));
+            item.Resolve("reviewer-1", Now.AddMinutes(3));
+        }
+        workItems.GetByIdAsync(item.Id, Arg.Any<CancellationToken>()).Returns(item);
+        messages.GetByIdAsync(item.SourceMessageId, Arg.Any<CancellationToken>())
+            .Returns(ProcessedMessage(item.SourceMessageId, classification));
+        proposer.ProposeAsync(Arg.Any<DraftProposalContext>(), Arg.Any<CancellationToken>())
+            .Returns(new DraftProposalResult("Synthetic response", new EmailAnalysisMetrics("fake", "synthetic-model", 1, 1, null, 1, null)));
+        var handler = CreateHandler(workItems, proposer, messages, enabled: true);
+
+        await Assert.ThrowsAsync<WorkItemStateConflictException>(() => handler.Handle(
+            new GenerateResponseDraftCommand(item.Id, item.Version, "reviewer-1"),
+            CancellationToken.None));
+
+        await proposer.DidNotReceive().ProposeAsync(Arg.Any<DraftProposalContext>(), Arg.Any<CancellationToken>());
+        await workItems.DidNotReceive().SaveAsync(Arg.Any<WorkItem>(), Arg.Any<CancellationToken>());
+    }
+
     [Fact]
     public async Task Generated_draft_uses_only_verified_facts_and_stays_unapproved()
     {

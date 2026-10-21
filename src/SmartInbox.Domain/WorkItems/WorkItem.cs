@@ -107,6 +107,8 @@ public sealed class WorkItem
         Changed(reviewerId, WorkItemAuditAction.ReviewStarted, now, null, null, "Review started.");
     }
 
+    public void EnsureEditableBy(string reviewerId) => RequireReviewer(reviewerId);
+
     public bool UpdateReview(
         EmailCategory category,
         EmailPriority priority,

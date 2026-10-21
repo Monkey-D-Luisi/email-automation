@@ -40,3 +40,25 @@ jobs:
         run: dotnet test SmartInbox.sln --configuration Release --no-build --no-restore
       - name: NuGet vulnerability audit
         run: dotnet list SmartInbox.sln package --vulnerable --include-transitive
+
+  web:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - name: Install frontend dependencies
+        working-directory: web
+        run: npm ci
+      - name: Frontend tests
+        working-directory: web
+        run: npm test
+      - name: Production build
+        working-directory: web
+        run: npm run build
+      - name: npm dependency audit
+        working-directory: web
+        run: npm audit

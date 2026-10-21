@@ -212,6 +212,7 @@ public sealed class WorkItemCommandHandlers(
             throw new DraftingDisabledException();
 
         var item = await GetExpectedAsync(command.WorkItemId, command.ExpectedVersion, cancellationToken);
+        Apply(() => item.EnsureEditableBy(command.ReviewerId));
         var message = await messages.GetByIdAsync(item.SourceMessageId, cancellationToken)
             ?? throw new WorkItemNotFoundException();
         var classification = message.Classification ?? throw new WorkItemValidationException(
