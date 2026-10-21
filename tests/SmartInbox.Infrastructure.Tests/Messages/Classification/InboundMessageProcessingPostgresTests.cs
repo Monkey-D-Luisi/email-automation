@@ -1,5 +1,6 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
+using NSubstitute;
 using SmartInbox.Application.Messages.Classification;
 using SmartInbox.Application.Messages.Ports;
 using SmartInbox.Application.Messages.Classification.Models;
@@ -119,6 +120,47 @@ public sealed class InboundMessageProcessingPostgresTests(PostgresFixture fixtur
         Assert.Equal(InboundMessageStatus.Processed, processed.Status);
         Assert.Equal(2, processed.ProcessingAttemptCount);
         Assert.Equal("retry succeeded", processed.Classification?.Summary);
+    }
+
+    [Fact]
+    public async Task Failed_completion_after_provider_success_can_repeat_the_provider_call_after_lease_expiry()
+    {
+        await fixture.ResetAsync();
+        var message = await AddMessageAsync();
+        var time = new MutableTimeProvider(Now);
+        var analyzer = new RecordingAnalyzer((_, _, _) => Task.FromResult(AnalysisResult("recovered result")));
+        var options = new EmailProcessingOptions { MaxAttempts = 3, LeaseDurationSeconds = 30 };
+
+        using (var services = fixture.CreateServiceProvider())
+        using (var scope = services.CreateScope())
+        {
+            var repository = scope.ServiceProvider.GetRequiredService<IInboundMessageRepository>();
+            var failingRepository = Substitute.For<IInboundMessageRepository>();
+            failingRepository.ClaimNextForProcessingAsync(
+                    Arg.Any<Guid>(), Arg.Any<DateTimeOffset>(), Arg.Any<TimeSpan>(), Arg.Any<int>(), Arg.Any<CancellationToken>())
+                .Returns(call => repository.ClaimNextForProcessingAsync(
+                    call.Arg<Guid>(), call.Arg<DateTimeOffset>(), call.Arg<TimeSpan>(), call.Arg<int>(), call.Arg<CancellationToken>()));
+            failingRepository.CompleteProcessingAsync(
+                    Arg.Any<Guid>(), Arg.Any<Guid>(), Arg.Any<EmailClassification>(), Arg.Any<EmailAnalysisMetrics>(), Arg.Any<CancellationToken>())
+                .Returns(_ => Task.FromException<bool>(new DbUpdateException("Injected completion persistence failure.")));
+
+            var processor = new InboundMessageProcessor(failingRepository, analyzer, options, time);
+            await Assert.ThrowsAsync<DbUpdateException>(() => processor.ProcessNextAsync(CancellationToken.None));
+        }
+
+        Assert.Equal(1, analyzer.CallCount);
+        var leased = await GetMessageAsync(message.Id);
+        Assert.Equal(InboundMessageStatus.Processing, leased.Status);
+        Assert.Equal(1, leased.ProcessingAttemptCount);
+
+        time.Advance(TimeSpan.FromSeconds(31));
+        Assert.True(await ProcessOneAsync(analyzer, options, time));
+
+        var processed = await GetMessageAsync(message.Id);
+        Assert.Equal(InboundMessageStatus.Processed, processed.Status);
+        Assert.Equal(2, processed.ProcessingAttemptCount);
+        Assert.Equal(2, analyzer.CallCount);
+        Assert.Equal("recovered result", processed.Classification?.Summary);
     }
 
     [Fact]

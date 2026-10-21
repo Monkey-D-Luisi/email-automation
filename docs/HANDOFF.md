@@ -35,9 +35,10 @@ The automated evaluation harness in `tests/SmartInbox.Application.Tests/Messages
 - Each message has at most one current classification. A retryable failure stores its kind, safe message, next attempt time, and attempt count.
 - PostgreSQL claims work with `FOR UPDATE SKIP LOCKED` and an expiring owner lease. Completion requires the current owner, preventing a reclaimed message's stale worker from overwriting the result.
 - Provider I/O occurs outside database transactions. Completion writes the classification and processed state atomically.
+- Invoice and order identifiers, amounts, currencies, and requested dates extracted from message text are marked as unverified business facts and require human review. A value appearing in the source does not verify its meaning; downstream use must preserve that distinction.
 - Transient connectivity, rate limits, and timeouts retry up to the configured limit. Permanent provider/authentication/schema errors stop without automatic retries.
 - Available metrics preserve the latest provider call telemetry and total attempt count; the database does not retain a full per-attempt history. Estimated cost remains unknown unless model pricing is configured.
-- Processing is at-least-once around external provider I/O. A crash after an OpenAI response but before the database commit can repeat that in-flight request after lease expiry; committed classifications and duplicate submissions do not trigger another analysis.
+- Processing is at-least-once around external provider I/O. A crash or completion-persistence failure after an OpenAI response can repeat that in-flight request after lease expiry, potentially incurring another charge. The worker is disabled by default; keep it disabled except for controlled runs, and use low retry/concurrency limits while monitoring provider usage. Committed classifications and duplicate submissions do not trigger another analysis.
 - Email content is stored as plain text. The shared service token does not provide user identity, mailbox-level authorization, rotation, or audit history.
 - The OpenAI SDK adapter is covered by fake-client tests. Credentials, model entitlement, network connectivity, and live structured output have not been tested.
 

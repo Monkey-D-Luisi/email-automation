@@ -39,6 +39,38 @@ public sealed class EmailAnalysisPolicyTests
         Assert.False(result.RequiresReview);
     }
 
+    [Theory]
+    [InlineData("This is not urgent.")]
+    [InlineData("No es urgente.")]
+    [InlineData("This is urgent, but it is not urgent.")]
+    public void Apply_downgrades_negated_or_conflicting_urgent_evidence(string statement)
+    {
+        var result = Policy.Apply(
+            Message(statement),
+            Candidate(priority: "Urgent", evidence: statement),
+            Now);
+
+        Assert.Equal(EmailPriority.Normal, result.Priority);
+        Assert.Contains(EmailReviewReason.UnsubstantiatedPriority, result.ReviewReasons);
+        Assert.True(result.RequiresReview);
+    }
+
+    [Theory]
+    [InlineData("This is not urgent.", "Urgent", "urgent")]
+    [InlineData("This is not high priority.", "High", "This is not high priority.")]
+    [InlineData("No urgente.", "Urgent", "urgente")]
+    public void Apply_downgrades_elevated_priority_when_source_context_negates_quoted_evidence(
+        string source,
+        string priority,
+        string evidence)
+    {
+        var result = Policy.Apply(Message(source), Candidate(priority: priority, evidence: evidence), Now);
+
+        Assert.Equal(EmailPriority.Normal, result.Priority);
+        Assert.Contains(EmailReviewReason.UnsubstantiatedPriority, result.ReviewReasons);
+        Assert.True(result.RequiresReview);
+    }
+
     [Fact]
     public void Apply_downgrades_elevated_priority_without_verbatim_evidence_and_requires_review()
     {
@@ -68,6 +100,53 @@ public sealed class EmailAnalysisPolicyTests
 
         Assert.Equal(EmailCategory.Unknown, result.Category);
         Assert.Contains(EmailReviewReason.UnknownCategory, result.ReviewReasons);
+    }
+
+    [Theory]
+    [InlineData("0")]
+    public void Apply_does_not_accept_numeric_category_values(string category)
+    {
+        var result = Apply(Candidate(category: category));
+
+        Assert.Equal(EmailCategory.Unknown, result.Category);
+        Assert.Contains(EmailReviewReason.UnknownCategory, result.ReviewReasons);
+    }
+
+    [Theory]
+    [InlineData("3")]
+    public void Apply_rejects_numeric_priority_values(string priority)
+    {
+        var exception = Assert.Throws<EmailAnalysisException>(() => Apply(Candidate(priority: priority)));
+
+        Assert.Equal(ProcessingFailureKind.InvalidStructuredOutput, exception.FailureKind);
+    }
+
+    [Theory]
+    [InlineData("10")]
+    public void Apply_rejects_numeric_fact_type_values(string factType)
+    {
+        var exception = Assert.Throws<EmailAnalysisException>(() => Apply(Candidate(facts:
+        [
+            new EmailFactCandidate(factType, "INV-123"),
+        ])));
+
+        Assert.Equal(ProcessingFailureKind.InvalidStructuredOutput, exception.FailureKind);
+    }
+
+    [Fact]
+    public void Apply_preserves_whitespace_trimming_for_named_enum_values()
+    {
+        var result = Policy.Apply(
+            Message("Routine business question mentioning INV-123."),
+            Candidate(category: " SalesInquiry ", priority: " Normal ", facts:
+            [
+                new EmailFactCandidate(" InvoiceNumber ", "INV-123"),
+            ]),
+            Now);
+
+        Assert.Equal(EmailCategory.SalesInquiry, result.Category);
+        Assert.Equal(EmailPriority.Normal, result.Priority);
+        Assert.Equal(EmailFactType.InvoiceNumber, Assert.Single(result.Facts).Type);
     }
 
     [Fact]
@@ -109,6 +188,19 @@ public sealed class EmailAnalysisPolicyTests
         Assert.Single(result.Facts);
         Assert.Equal("500 euros", result.Facts[0].Value);
         Assert.Contains(EmailReviewReason.UnsupportedFact, result.ReviewReasons);
+    }
+
+    [Fact]
+    public void Apply_marks_business_facts_for_human_review_even_when_the_value_appears_in_source()
+    {
+        var result = Policy.Apply(
+            Message("Please call extension 123."),
+            Candidate(facts: [new EmailFactCandidate("InvoiceNumber", "123")]),
+            Now);
+
+        Assert.Equal(EmailFactType.InvoiceNumber, Assert.Single(result.Facts).Type);
+        Assert.True(result.RequiresReview);
+        Assert.Contains(EmailReviewReason.UnverifiedBusinessFact, result.ReviewReasons);
     }
 
     [Fact]
