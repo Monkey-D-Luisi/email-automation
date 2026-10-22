@@ -33,7 +33,7 @@ internal sealed class GmailDraftExportRepository(AppDbContext dbContext) : IGmai
         if (workItem.Version != expectedWorkItemVersion)
             throw new WorkItemConcurrencyException();
 
-        var existing = await dbContext.GmailDraftExports.SingleOrDefaultAsync(item =>
+        var existing = await dbContext.GmailDraftExports.AsNoTracking().SingleOrDefaultAsync(item =>
             item.DraftId == export.DraftId &&
             item.ApprovedRevision == export.ApprovedRevision &&
             item.DestinationMailboxId == export.DestinationMailboxId &&
@@ -129,12 +129,12 @@ internal sealed class GmailDraftExportRepository(AppDbContext dbContext) : IGmai
             return null;
         }
 
-        await dbContext.Entry(workItemRecord).Reference(item => item.Draft).LoadAsync(cancellationToken);
-        var revision = workItemRecord.Draft is null
+        var draft = await LoadDraftAsync(workItemRecord.Id, cancellationToken);
+        var revision = draft is null
             ? null
-            : await LoadCurrentRevisionAsync(workItemRecord.Draft, cancellationToken);
+            : await LoadCurrentRevisionAsync(draft.Id, cancellationToken);
         var exportToClaim = GmailDraftExportPersistenceMapper.ToDomain(record);
-        if (!IsStillCurrentApprovedRevision(workItemRecord, workItemRecord.Draft, revision, exportToClaim))
+        if (!IsStillCurrentApprovedRevision(workItemRecord, draft, revision, exportToClaim))
         {
             exportToClaim.CancelPending(timestamp);
             GmailDraftExportPersistenceMapper.Update(record, exportToClaim);
@@ -303,41 +303,54 @@ internal sealed class GmailDraftExportRepository(AppDbContext dbContext) : IGmai
         return result;
     }
 
-    private async Task<WorkItemRecord?> LockWorkItemAsync(Guid workItemId, CancellationToken cancellationToken) =>
-        await dbContext.WorkItems
+    // A tracking raw-SQL query can reuse scoped state without applying the locked row's values.
+    private async Task<WorkItemRecord?> LockWorkItemAsync(Guid workItemId, CancellationToken cancellationToken)
+    {
+        var workItem = await dbContext.WorkItems
             .FromSqlInterpolated($"SELECT * FROM \"work_items\" WHERE \"Id\" = {workItemId} FOR UPDATE")
             .SingleOrDefaultAsync(cancellationToken);
+        if (workItem is not null)
+            await dbContext.Entry(workItem).ReloadAsync(cancellationToken);
+        return workItem;
+    }
 
     private async Task<GmailDraftExportRecord?> LockExportAsync(
         Guid exportId,
         CancellationToken cancellationToken,
         GmailDraftExportStatus? status = null)
     {
+        GmailDraftExportRecord? export;
         if (status is null)
-            return await dbContext.GmailDraftExports
+            export = await dbContext.GmailDraftExports
                 .FromSqlInterpolated($"SELECT * FROM \"gmail_draft_exports\" WHERE \"Id\" = {exportId} FOR UPDATE")
                 .SingleOrDefaultAsync(cancellationToken);
-        return await dbContext.GmailDraftExports
-            .FromSqlInterpolated($"SELECT * FROM \"gmail_draft_exports\" WHERE \"Id\" = {exportId} AND \"Status\" = {status.Value.ToString()} FOR UPDATE")
-            .SingleOrDefaultAsync(cancellationToken);
+        else
+            export = await dbContext.GmailDraftExports
+                .FromSqlInterpolated($"SELECT * FROM \"gmail_draft_exports\" WHERE \"Id\" = {exportId} AND \"Status\" = {status.Value.ToString()} FOR UPDATE")
+                .SingleOrDefaultAsync(cancellationToken);
+        if (export is not null)
+            await dbContext.Entry(export).ReloadAsync(cancellationToken);
+        return export;
     }
 
-    private async Task<ResponseDraftRevisionRecord?> LoadCurrentRevisionAsync(
-        ResponseDraftRecord draft,
-        CancellationToken cancellationToken)
-    {
-        await dbContext.Entry(draft).Collection(item => item.Revisions).LoadAsync(cancellationToken);
-        return draft.Revisions.OrderByDescending(item => item.Revision).FirstOrDefault();
-    }
+    private Task<ResponseDraftRecord?> LoadDraftAsync(Guid workItemId, CancellationToken cancellationToken) =>
+        dbContext.ResponseDrafts.AsNoTracking()
+            .SingleOrDefaultAsync(draft => draft.WorkItemId == workItemId, cancellationToken);
+
+    private Task<ResponseDraftRevisionRecord?> LoadCurrentRevisionAsync(Guid draftId, CancellationToken cancellationToken) =>
+        dbContext.ResponseDraftRevisions.AsNoTracking()
+            .Where(revision => revision.ResponseDraftId == draftId)
+            .OrderByDescending(revision => revision.Revision)
+            .FirstOrDefaultAsync(cancellationToken);
 
     private async Task LoadAndRequireCurrentApprovedRevisionAsync(
         WorkItemRecord workItem,
         GmailDraftExport export,
         CancellationToken cancellationToken)
     {
-        await dbContext.Entry(workItem).Reference(item => item.Draft).LoadAsync(cancellationToken);
-        var revision = workItem.Draft is null ? null : await LoadCurrentRevisionAsync(workItem.Draft, cancellationToken);
-        if (!IsStillCurrentApprovedRevision(workItem, workItem.Draft, revision, export))
+        var draft = await LoadDraftAsync(workItem.Id, cancellationToken);
+        var revision = draft is null ? null : await LoadCurrentRevisionAsync(draft.Id, cancellationToken);
+        if (!IsStillCurrentApprovedRevision(workItem, draft, revision, export))
             throw new WorkItemStateConflictException("The exported revision is no longer the current approved revision.");
     }
 

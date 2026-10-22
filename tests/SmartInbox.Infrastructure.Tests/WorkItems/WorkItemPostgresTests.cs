@@ -5,6 +5,7 @@ using SmartInbox.Application.WorkItems.Models;
 using SmartInbox.Application.WorkItems.Ports;
 using SmartInbox.Domain.Messages;
 using SmartInbox.Domain.WorkItems;
+using SmartInbox.Infrastructure.Persistence;
 using SmartInbox.Infrastructure.WorkItems.Persistence;
 
 namespace SmartInbox.Infrastructure.Tests.WorkItems;
@@ -240,6 +241,78 @@ public sealed class WorkItemPostgresTests(PostgresFixture fixture)
         Assert.Equal("synthetic-gmail-draft-1", persisted.GmailDraftId);
         Assert.Contains(await firstScope.ServiceProvider.GetRequiredService<IWorkItemRepository>().GetHistoryAsync(workItemId) ?? [],
             entry => entry.Action == WorkItemAuditAction.GmailDraftExportSucceeded);
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task Duplicate_gmail_export_callback_refreshes_a_stale_tracked_export(bool firstRepositoryWins)
+    {
+        await fixture.ResetAsync();
+        var (_, requested) = await CreatePendingExportAsync();
+        using var firstServices = fixture.CreateServiceProvider();
+        using var secondServices = fixture.CreateServiceProvider();
+        using var firstScope = firstServices.CreateScope();
+        using var secondScope = secondServices.CreateScope();
+        var firstRepository = firstScope.ServiceProvider.GetRequiredService<IGmailDraftExportRepository>();
+        var secondRepository = secondScope.ServiceProvider.GetRequiredService<IGmailDraftExportRepository>();
+        var firstContext = firstScope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var secondContext = secondScope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var winnerRepository = firstRepositoryWins ? firstRepository : secondRepository;
+        var losingRepository = firstRepositoryWins ? secondRepository : firstRepository;
+        var losingContext = firstRepositoryWins ? secondContext : firstContext;
+
+        var existing = await losingRepository.CreateOrGetAsync(requested, expectedWorkItemVersion: 3);
+        Assert.False(existing.Created);
+        Assert.Empty(losingContext.ChangeTracker.Entries<GmailDraftExportRecord>());
+        var trackedPending = await losingContext.GmailDraftExports.SingleAsync(item => item.Id == requested.Id);
+        Assert.Equal(GmailDraftExportStatus.Pending.ToString(), trackedPending.Status);
+
+        var claim = await winnerRepository.ClaimPendingAsync("test-mailbox", TimeSpan.FromMinutes(5), Now.AddMinutes(5));
+        Assert.NotNull(claim);
+        var attemptId = Assert.IsType<Guid>(claim.AttemptId);
+        Assert.Equal(GmailDraftExportTransition.Applied, await winnerRepository.CompleteAsync(
+            claim.Id, attemptId, "synthetic-gmail-draft-1", Now.AddMinutes(6)));
+        Assert.Equal(GmailDraftExportTransition.Duplicate, await losingRepository.CompleteAsync(
+            claim.Id, attemptId, "synthetic-gmail-draft-1", Now.AddMinutes(6)));
+    }
+
+    [Fact]
+    public async Task Retry_requires_the_current_approved_revision_when_an_older_graph_is_tracked()
+    {
+        await fixture.ResetAsync();
+        var (workItemId, requested) = await CreatePendingExportAsync();
+        using var exportServices = fixture.CreateServiceProvider();
+        using var exportScope = exportServices.CreateScope();
+        var exports = exportScope.ServiceProvider.GetRequiredService<IGmailDraftExportRepository>();
+        var claim = Assert.IsType<GmailDraftExport>(await exports.ClaimPendingAsync(
+            "test-mailbox", TimeSpan.FromMinutes(5), Now.AddMinutes(5)));
+        var context = exportScope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var trackedWorkItem = Assert.Single(context.WorkItems.Local, item => item.Id == workItemId);
+        await context.Entry(trackedWorkItem).Reference(item => item.Draft).LoadAsync();
+        var trackedDraft = Assert.IsType<ResponseDraftRecord>(trackedWorkItem.Draft);
+        await context.Entry(trackedDraft).Collection(draft => draft.Revisions).LoadAsync();
+        Assert.Equal(1, Assert.Single(trackedDraft.Revisions).Revision);
+        Assert.Equal(GmailDraftExportTransition.Applied, await exports.FailAsync(
+            claim.Id, claim.AttemptId!.Value, GmailDraftExportFailureKind.ProviderOutcomeUnknown, Now.AddMinutes(6)));
+
+        using var reviewerServices = fixture.CreateServiceProvider();
+        using var reviewerScope = reviewerServices.CreateScope();
+        var workItems = reviewerScope.ServiceProvider.GetRequiredService<IWorkItemRepository>();
+        var workItem = Assert.IsType<WorkItem>(await workItems.GetByIdAsync(workItemId));
+        workItem.SaveDraft("alex@example.test", "Synthetic response", "A new unapproved revision.", "reviewer-1", Now.AddMinutes(7));
+        await workItems.SaveAsync(workItem);
+        var currentWorkItem = Assert.IsType<WorkItem>(await workItems.GetByIdAsync(workItemId));
+
+        await Assert.ThrowsAsync<WorkItemStateConflictException>(() => exports.RetryAfterManualCheckAsync(
+            workItemId,
+            requested.Id,
+            currentWorkItem.Version,
+            "test-mailbox",
+            "reviewer-1",
+            Now.AddMinutes(8)));
+        var persisted = Assert.Single(await exports.ListByWorkItemAsync(workItemId) ?? []);
+        Assert.Equal(GmailDraftExportStatus.NeedsReconciliation, persisted.Status);
     }
 
     [Fact]
