@@ -29,7 +29,9 @@ The `web/` Next.js 16.4.2 App Router panel supports reviewer sign-in, inbox filt
 
 ## Hosted CI
 
-The CI workflow runs on pushes to `main` and `feature/**`, and on pull requests. It uses an isolated PostgreSQL service, fake provider implementations, and synthetic fixtures; it requires no production secrets and does not contact Gmail or OpenAI. View the latest hosted result in [GitHub Actions](https://github.com/Monkey-D-Luisi/email-automation/actions/workflows/ci.yml). Hosted CI results are distinct from the local verification recorded below.
+The CI workflow runs on pushes to `main` and `feature/**`, and on pull requests. It uses an isolated PostgreSQL service, fake provider implementations, and synthetic fixtures; it requires no production secrets and does not contact Gmail or OpenAI.
+
+The hosted run for the Phase 4 code and test fix at `d6037b6` [passed both jobs](https://github.com/Monkey-D-Luisi/email-automation/actions/runs/39752702956): Release build, all .NET/PostgreSQL tests, NuGet audit, frontend and n8n fixture tests, Next.js production build, and npm audit. The initial run at `6745f92` failed because minimal-host API startup read the connection string before the test's late in-memory configuration was available. The test fixture now supplies its isolated connection string while creating each host and restores the previous process environment; the API suite passed without User Secrets and the hosted rerun passed. View subsequent runs in [GitHub Actions](https://github.com/Monkey-D-Luisi/email-automation/actions/workflows/ci.yml).
 
 ## Publication preparation verification — 2026-10-22
 
@@ -37,8 +39,16 @@ The CI workflow runs on pushes to `main` and `feature/**`, and on pull requests.
 - PostgreSQL-backed `dotnet test SmartInbox.sln --configuration Release --no-build --no-restore` passed **118/118**: Domain 17, Application 51, Infrastructure 37, API 13. Tests used local PostgreSQL 17 in `smartinbox_test` and isolated test schemas.
 - EF reported no pending model changes. The NuGet vulnerability audit reported no vulnerable packages.
 - Frontend and n8n workflow tests passed **16/16**; the Next.js production build passed; `npm audit` reported zero vulnerabilities.
-- Gitleaks 8.30.1 scanned all 14 commits across the local branches with full redaction and found no leaks.
-- These are local results. Hosted GitHub Actions results are linked above and must be checked for the published branch separately.
+- Gitleaks 8.30.1 scanned all published branch history with full redaction and found no leaks.
+- These are local results. Hosted GitHub Actions results are linked above and were verified separately.
+
+## Fresh clone verification — 2026-10-22
+
+- Cloned `feature/gmail-n8n-integration` from the private GitHub repository at `d6037b6` into a new temporary directory. The clone had no project `.env`, `.NET` User Secrets, or existing build output.
+- Created a new random local `.env` and an isolated PostgreSQL 17 container, database volume, and test schemas. Applied all EF migrations to the empty development database.
+- `dotnet restore`, `dotnet tool restore`, Release build, and all **118/118** PostgreSQL-backed .NET tests passed. EF reported no pending model changes and the NuGet audit found no vulnerable packages.
+- `npm ci`, frontend and n8n workflow tests (**16/16**), Next.js production build, and `npm audit` passed with zero vulnerabilities.
+- This verified the clone and documented commands on this Windows host. It reused the installed .NET, Node.js 22, Docker, and dependency caches, so it is not a clean-machine verification.
 
 The Phase 3 baseline before this follow-up was 98 .NET tests (Domain 10, Application 46, Infrastructure 30, API 12) and 2 frontend tests. This follow-up adds three backend theory cases and two frontend regression cases, bringing the verified totals to 101 .NET tests and 4 frontend tests.
 
