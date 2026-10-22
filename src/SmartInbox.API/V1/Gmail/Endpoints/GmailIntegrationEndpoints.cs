@@ -99,7 +99,8 @@ public static partial class GmailIntegrationEndpoints
         ISender sender,
         CancellationToken cancellationToken)
     {
-        var status = await sender.Send(new CompleteGmailDraftExportCommand(id, request.AttemptId, request.GmailDraftId), cancellationToken);
+        var status = await sender.Send(new CompleteGmailDraftExportCommand(
+            id, request.AttemptId, request.ExternalDraftId ?? request.GmailDraftId ?? string.Empty, DraftExportProvider.Gmail), cancellationToken);
         return CallbackResult(status);
     }
 
@@ -109,7 +110,8 @@ public static partial class GmailIntegrationEndpoints
         ISender sender,
         CancellationToken cancellationToken)
     {
-        var status = await sender.Send(new FailGmailDraftExportCommand(id, request.AttemptId, request.FailureKind), cancellationToken);
+        var status = await sender.Send(new FailGmailDraftExportCommand(
+            id, request.AttemptId, request.FailureKind, DraftExportProvider.Gmail), cancellationToken);
         return CallbackResult(status);
     }
 

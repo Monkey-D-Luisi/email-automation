@@ -7,6 +7,8 @@ internal sealed class InboundMessageRecord
     public string MailboxId { get; set; } = string.Empty;
     public string ExternalMessageId { get; set; } = string.Empty;
     public string? ExternalThreadId { get; set; }
+    public string? ExternalInternetMessageId { get; set; }
+    public string ExternalRecipientEmailsJson { get; set; } = "[]";
     public string? SenderEmail { get; set; }
     public string? SenderName { get; set; }
     public string Subject { get; set; } = string.Empty;

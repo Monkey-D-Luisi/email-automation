@@ -1,0 +1,839 @@
+{
+  "name": "Smart Inbox Approved Outlook Draft Export",
+  "nodes": [
+    {
+      "id": "poll-pending-outlook-draft-exports",
+      "name": "Poll Pending Outlook Draft Exports",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        250,
+        160
+      ],
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes",
+              "minutesInterval": 1
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "manual-synthetic-outlook-export-event",
+      "name": "Manual Synthetic Outlook Export Event",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        250,
+        350
+      ],
+      "parameters": {}
+    },
+    {
+      "id": "require-explicit-outlook-export-mode",
+      "name": "Require Explicit Outlook Export Mode",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        480,
+        230
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const mode = $env.SMARTINBOX_OUTLOOK_MODE || \"disabled\";\nif (mode === \"disabled\") return [];\nif (![\"fake\", \"fake-ambiguous\", \"live\"].includes(mode)) throw new Error(\"Set SMARTINBOX_OUTLOOK_MODE to disabled, fake, fake-ambiguous, or live.\");\nif (mode === \"live\" && !($env.SMARTINBOX_OUTLOOK_MAILBOX_ID || \"\").trim()) throw new Error(\"Configure the authorized Outlook mailbox identity.\");\nreturn [{ json: { mode } }];"
+      }
+    },
+    {
+      "id": "use-live-outlook-graph",
+      "name": "Use Live Outlook Graph?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        700,
+        230
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "use-live-outlook-graph-condition",
+              "leftValue": "={{$json.mode === \"live\"}}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      }
+    },
+    {
+      "id": "verify-outlook-export-mailbox",
+      "name": "Verify Outlook Export Mailbox",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        920,
+        120
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "https://graph.microsoft.com/v1.0/me?$select=mail,userPrincipalName",
+        "sendHeaders": false,
+        "sendBody": false,
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "json",
+              "fullResponse": true,
+              "neverError": true
+            }
+          }
+        },
+        "authentication": "genericCredentialType",
+        "genericAuthType": "oAuth2Api"
+      },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "id": "confirm-outlook-export-identity",
+      "name": "Confirm Outlook Export Identity",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1140,
+        120
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const response = $input.first().json;\nconst body = response.body ?? response;\nconst expected = String($env.SMARTINBOX_OUTLOOK_MAILBOX_ID || \"\").trim().toLowerCase();\nconst actual = String(body.mail || body.userPrincipalName || \"\").trim().toLowerCase();\nconst mode = $(\"Require Explicit Outlook Export Mode\").first().json.mode;\nreturn [{ json: { identityVerified: Number(response.statusCode ?? 200) === 200 && !!expected && actual === expected, reason: actual === expected ? null : \"mailbox-identity-mismatch\", mode } }];"
+      }
+    },
+    {
+      "id": "outlook-export-identity-matches",
+      "name": "Outlook Export Identity Matches?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1360,
+        120
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "outlook-export-identity-matches-condition",
+              "leftValue": "={{$json.identityVerified === true}}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      }
+    },
+    {
+      "id": "safe-outlook-export-identity-diagnostic",
+      "name": "Safe Outlook Export Identity Diagnostic",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1590,
+        380
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "return [{ json: { outcome: \"mailbox-identity-not-verified\" } }];"
+      }
+    },
+    {
+      "id": "safe-outlook-identity-request-diagnostic",
+      "name": "Safe Outlook Identity Request Diagnostic",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1140,
+        380
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "return [{ json: { outcome: \"mailbox-identity-request-failed\" } }];"
+      }
+    },
+    {
+      "id": "claim-outlook-export",
+      "name": "Claim Outlook Export",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1590,
+        120
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "={{$env.SMARTINBOX_API_ORIGIN + '/api/v1/integrations/outlook/draft-exports/claim'}}",
+        "sendHeaders": false,
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ { } }}",
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "json",
+              "fullResponse": true,
+              "neverError": true
+            }
+          }
+        },
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpBearerAuth"
+      },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "id": "outlook-export-claim-available",
+      "name": "Outlook Export Claim Available?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1810,
+        120
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "outlook-export-claim-available-condition",
+              "leftValue": "={{$json.body?.claim != null}}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      }
+    },
+    {
+      "id": "use-fake-outlook-draft-adapter",
+      "name": "Use Fake Outlook Draft Adapter?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        2030,
+        120
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "use-fake-outlook-draft-adapter-condition",
+              "leftValue": "={{$env.SMARTINBOX_OUTLOOK_MODE === \"fake\" || $env.SMARTINBOX_OUTLOOK_MODE === \"fake-ambiguous\"}}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      }
+    },
+    {
+      "id": "simulate-ambiguous-outlook-fake-outcome",
+      "name": "Simulate Ambiguous Outlook Fake Outcome?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        2250,
+        40
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "simulate-ambiguous-outlook-fake-outcome-condition",
+              "leftValue": "={{$env.SMARTINBOX_OUTLOOK_MODE === \"fake-ambiguous\"}}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      }
+    },
+    {
+      "id": "create-synthetic-outlook-draft-id",
+      "name": "Create Synthetic Outlook Draft ID",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2470,
+        90
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const claim = $input.first().json.body.claim; return [{ json: { claim, externalDraftId: `fake-${claim.exportId}-${claim.attemptId}`, isDraft: true } }];"
+      }
+    },
+    {
+      "id": "create-outlook-draft",
+      "name": "Create Outlook Draft",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2470,
+        250
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "https://graph.microsoft.com/v1.0/me/messages",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Prefer",
+              "value": "IdType=\"ImmutableId\""
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ { subject: $json.body.claim.subject, body: { contentType: \"Text\", content: $json.body.claim.body }, toRecipients: [{ emailAddress: { address: $json.body.claim.recipientEmail } }] } }}",
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "json",
+              "fullResponse": true,
+              "neverError": true
+            }
+          }
+        },
+        "authentication": "genericCredentialType",
+        "genericAuthType": "oAuth2Api"
+      },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "id": "validate-outlook-draft-result",
+      "name": "Validate Outlook Draft Result",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2690,
+        250
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const response = $input.first().json;\nconst body = response.body ?? response;\nconst claim = $(\"Claim Outlook Export\").first().json.body.claim;\nconst externalDraftId = typeof body.id === \"string\" ? body.id : null;\nreturn [{ json: { claim, externalDraftId, valid: Number(response.statusCode ?? 0) === 201 && body.isDraft === true && !!externalDraftId } }];"
+      }
+    },
+    {
+      "id": "outlook-draft-created",
+      "name": "Outlook Draft Created?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        2910,
+        250
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "outlook-draft-created-condition",
+              "leftValue": "={{$json.valid === true}}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      }
+    },
+    {
+      "id": "prepare-outlook-export-completion",
+      "name": "Prepare Outlook Export Completion",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3130,
+        120
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const item = $input.first().json; return [{ json: { exportId: item.claim.exportId, attemptId: item.claim.attemptId, externalDraftId: item.externalDraftId } }];"
+      }
+    },
+    {
+      "id": "record-outlook-draft-id",
+      "name": "Record Outlook Draft ID",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        3350,
+        120
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "={{$env.SMARTINBOX_API_ORIGIN + '/api/v1/integrations/outlook/draft-exports/' + $json.exportId + '/complete'}}",
+        "sendHeaders": false,
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ { attemptId: $json.attemptId, externalDraftId: $json.externalDraftId } }}",
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "json",
+              "fullResponse": true,
+              "neverError": true
+            }
+          }
+        },
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpBearerAuth"
+      },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "id": "prepare-ambiguous-outlook-provider-outcome",
+      "name": "Prepare Ambiguous Outlook Provider Outcome",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3130,
+        300
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const claim = $(\"Claim Outlook Export\").first().json.body.claim; return [{ json: { exportId: claim.exportId, attemptId: claim.attemptId, failureKind: \"ProviderOutcomeUnknown\" } }];"
+      }
+    },
+    {
+      "id": "record-outlook-outcome-unknown",
+      "name": "Record Outlook Outcome Unknown",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        3350,
+        300
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "={{$env.SMARTINBOX_API_ORIGIN + '/api/v1/integrations/outlook/draft-exports/' + $json.exportId + '/fail'}}",
+        "sendHeaders": false,
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ { attemptId: $json.attemptId, failureKind: $json.failureKind } }}",
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "json",
+              "fullResponse": true,
+              "neverError": true
+            }
+          }
+        },
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpBearerAuth"
+      },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "id": "sanitize-outlook-integration-request-error",
+      "name": "Sanitize Outlook Integration Request Error",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3570,
+        430
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const item = $input.first().json; return [{ json: { outcome: \"integration-request-failed\", httpStatus: item.statusCode ?? null } }];"
+      }
+    },
+    {
+      "id": "report-outlook-claim-status-safely",
+      "name": "Report Outlook Claim Status Safely",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2030,
+        380
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const response = $input.first().json; const status = Number(response.statusCode ?? 0); return [{ json: { outcome: status === 200 ? \"no-pending-outlook-export\" : \"claim-request-failed\", httpStatus: status || null } }];"
+      }
+    }
+  ],
+  "connections": {
+    "Poll Pending Outlook Draft Exports": {
+      "main": [
+        [
+          {
+            "node": "Require Explicit Outlook Export Mode",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Manual Synthetic Outlook Export Event": {
+      "main": [
+        [
+          {
+            "node": "Require Explicit Outlook Export Mode",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Require Explicit Outlook Export Mode": {
+      "main": [
+        [
+          {
+            "node": "Use Live Outlook Graph?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Use Live Outlook Graph?": {
+      "main": [
+        [
+          {
+            "node": "Verify Outlook Export Mailbox",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Claim Outlook Export",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Verify Outlook Export Mailbox": {
+      "main": [
+        [
+          {
+            "node": "Confirm Outlook Export Identity",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Safe Outlook Identity Request Diagnostic",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Confirm Outlook Export Identity": {
+      "main": [
+        [
+          {
+            "node": "Outlook Export Identity Matches?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Outlook Export Identity Matches?": {
+      "main": [
+        [
+          {
+            "node": "Claim Outlook Export",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Safe Outlook Export Identity Diagnostic",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Safe Outlook Export Identity Diagnostic": {
+      "main": [
+        []
+      ]
+    },
+    "Safe Outlook Identity Request Diagnostic": {
+      "main": [
+        []
+      ]
+    },
+    "Claim Outlook Export": {
+      "main": [
+        [
+          {
+            "node": "Outlook Export Claim Available?",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Sanitize Outlook Integration Request Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Outlook Export Claim Available?": {
+      "main": [
+        [
+          {
+            "node": "Use Fake Outlook Draft Adapter?",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Report Outlook Claim Status Safely",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Use Fake Outlook Draft Adapter?": {
+      "main": [
+        [
+          {
+            "node": "Simulate Ambiguous Outlook Fake Outcome?",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Create Outlook Draft",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Simulate Ambiguous Outlook Fake Outcome?": {
+      "main": [
+        [
+          {
+            "node": "Prepare Ambiguous Outlook Provider Outcome",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Create Synthetic Outlook Draft ID",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create Synthetic Outlook Draft ID": {
+      "main": [
+        [
+          {
+            "node": "Prepare Outlook Export Completion",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create Outlook Draft": {
+      "main": [
+        [
+          {
+            "node": "Validate Outlook Draft Result",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Prepare Ambiguous Outlook Provider Outcome",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate Outlook Draft Result": {
+      "main": [
+        [
+          {
+            "node": "Outlook Draft Created?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Outlook Draft Created?": {
+      "main": [
+        [
+          {
+            "node": "Prepare Outlook Export Completion",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Prepare Ambiguous Outlook Provider Outcome",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Outlook Export Completion": {
+      "main": [
+        [
+          {
+            "node": "Record Outlook Draft ID",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Record Outlook Draft ID": {
+      "main": [
+        [],
+        [
+          {
+            "node": "Sanitize Outlook Integration Request Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Ambiguous Outlook Provider Outcome": {
+      "main": [
+        [
+          {
+            "node": "Record Outlook Outcome Unknown",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Record Outlook Outcome Unknown": {
+      "main": [
+        [],
+        [
+          {
+            "node": "Sanitize Outlook Integration Request Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Sanitize Outlook Integration Request Error": {
+      "main": [
+        []
+      ]
+    },
+    "Report Outlook Claim Status Safely": {
+      "main": [
+        []
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "saveDataErrorExecution": "none",
+    "saveDataSuccessExecution": "none",
+    "saveExecutionProgress": false,
+    "callerPolicy": "workflowsFromSameOwner"
+  },
+  "versionId": "cf37b409-cd20-4f91-bbd8-bbf8e84625d8",
+  "meta": {
+    "templateCredsSetupCompleted": false
+  },
+  "tags": []
+}

@@ -22,20 +22,37 @@ public sealed record CreateGmailDraftExportRequestV1(
     int ExpectedVersion,
     int Revision,
     string DestinationMailboxId,
-    string RecipientEmail);
+    string RecipientEmail,
+    DraftExportProvider Provider = DraftExportProvider.Gmail);
 
-public sealed record RetryGmailDraftExportRequestV1(int ExpectedVersion, bool ConfirmedNoDraftExists);
+public sealed record RetryGmailDraftExportRequestV1(
+    int ExpectedVersion,
+    bool ConfirmedNoDraftExists,
+    DraftExportProvider Provider = DraftExportProvider.Gmail);
 
-public sealed record ReconcileGmailDraftExportRequestV1(int ExpectedVersion, string GmailDraftId);
+public sealed record ReconcileGmailDraftExportRequestV1(
+    int ExpectedVersion,
+    string? GmailDraftId,
+    DraftExportProvider Provider = DraftExportProvider.Gmail,
+    string? ExternalDraftId = null);
 
-public sealed record FailGmailDraftExportRequestV1(Guid AttemptId, GmailDraftExportFailureKind FailureKind);
+public sealed record FailGmailDraftExportRequestV1(
+    Guid AttemptId,
+    GmailDraftExportFailureKind FailureKind,
+    DraftExportProvider Provider = DraftExportProvider.Gmail);
 
-public sealed record CompleteGmailDraftExportRequestV1(Guid AttemptId, string GmailDraftId);
+public sealed record CompleteGmailDraftExportRequestV1(
+    Guid AttemptId,
+    string? GmailDraftId,
+    DraftExportProvider Provider = DraftExportProvider.Gmail,
+    string? ExternalDraftId = null);
 
 public sealed record GmailDraftExportListResponseV1(
     bool Enabled,
     string? DestinationMailboxId,
-    IReadOnlyList<GmailDraftExportResponseV1> Exports);
+    IReadOnlyList<GmailDraftExportResponseV1> Exports,
+    bool OutlookEnabled = false,
+    string? OutlookDestinationMailboxId = null);
 
 public sealed record GmailDraftExportResponseV1(
     Guid Id,
@@ -50,7 +67,9 @@ public sealed record GmailDraftExportResponseV1(
     string Status,
     int AttemptCount,
     string? GmailDraftId,
-    string? FailureKind);
+    string? FailureKind,
+    DraftExportProvider Provider = DraftExportProvider.Gmail,
+    string? ExternalDraftId = null);
 
 public sealed record ClaimGmailDraftExportResponseV1(GmailDraftExportClaimV1? Claim);
 
@@ -66,6 +85,7 @@ public sealed record GmailDraftExportClaimV1(
     string Subject,
     string Body,
     string ContentFingerprint,
-    DateTimeOffset LeaseExpiresAt);
+    DateTimeOffset LeaseExpiresAt,
+    DraftExportProvider Provider = DraftExportProvider.Gmail);
 
 public sealed record GmailDraftExportCallbackResponseV1(string Status);

@@ -1,6 +1,6 @@
 # Roadmap
 
-Phases 1–4 are implemented in the private repository. The complete current tree is on `feature/gmail-n8n-integration`, the default branch. `main` remains the Phase 1 baseline; `feature/ai-email-classification` and `feature/human-review-and-drafts` preserve the Phase 2 and Phase 3 branch tips. See [DEVELOPMENT_SETUP.md](DEVELOPMENT_SETUP.md) to clone the complete implementation.
+Phases 1–4 are implemented in the private repository. The Outlook extension is developed on `feature/outlook-graph-integration` from the complete `feature/gmail-n8n-integration` Phase 4 baseline. `main` remains the Phase 1 baseline; `feature/ai-email-classification` and `feature/human-review-and-drafts` preserve the Phase 2 and Phase 3 branch tips. See [DEVELOPMENT_SETUP.md](DEVELOPMENT_SETUP.md) to clone the complete implementation.
 
 ## Phase 1 — Email ingestion and persistence
 
@@ -18,9 +18,9 @@ Current limits: one configured reviewer, localhost/synthetic data only, and no r
 
 ## Phase 4 — Integrations
 
-Implemented: one-configured-mailbox Gmail ingestion through n8n, a PostgreSQL-backed approved-draft export intent and lease, separate integration tokens, manual reconciliation after ambiguous Gmail results, reviewer-confirmed recipient/mailbox, and an inactive Gmail Draft/Create workflow. Both live paths are disabled by default; no send operation exists. Gmail compose OAuth itself permits sending, and Gmail reply threading remains unsupported. Offline fake mode is locally verified; live OAuth and Google API behavior are unverified. See `integrations/n8n/README.md` for activation and limitations.
+Implemented: one-configured-mailbox Gmail and Outlook ingestion through n8n, shared provider-scoped export intents and leases, separate service tokens, reviewer-confirmed destination and recipient, and inactive draft-only workflows. Both live paths are disabled by default; no send operation exists. Outlook uses delegated Microsoft Graph OAuth, `/me` mailbox verification, a configured custom test folder and fixed cutoff, and manual reconciliation after ambiguous draft creation. The fixed cutoff re-reads the small test scope and has no durable delta checkpoint. Gmail compose and Outlook `Mail.ReadWrite` OAuth permissions allow broader provider operations than the workflows use. Offline fake and synthetic mapper paths are covered; no Microsoft OAuth or live Graph behavior has been verified. See [the n8n guide](../integrations/n8n/README.md) and [Outlook test setup](OUTLOOK_TEST_SETUP.md).
 
-Remaining before real use: authorize a dedicated test mailbox, verify both OAuth credentials resolve to the configured mailbox, and perform the separately approved create-only Gmail acceptance. Do not use customer data or expose the local services publicly.
+Remaining before real Outlook use: the user must complete Microsoft app registration, consent to the two delegated credentials, verify the test-folder ID and `/me` identity, and separately authorize a controlled one-message/one-draft test. No authentication, live mailbox polling, Graph call, or draft mutation has been performed. Do not use customer data or expose the local services publicly.
 
 ## Phase 5 — Safe operations
 

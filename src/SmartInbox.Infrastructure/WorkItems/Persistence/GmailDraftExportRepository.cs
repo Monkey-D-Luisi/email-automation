@@ -34,6 +34,7 @@ internal sealed class GmailDraftExportRepository(AppDbContext dbContext) : IGmai
             throw new WorkItemConcurrencyException();
 
         var existing = await dbContext.GmailDraftExports.AsNoTracking().SingleOrDefaultAsync(item =>
+            item.Provider == export.Provider.ToString() &&
             item.DraftId == export.DraftId &&
             item.ApprovedRevision == export.ApprovedRevision &&
             item.DestinationMailboxId == export.DestinationMailboxId &&
@@ -49,15 +50,23 @@ internal sealed class GmailDraftExportRepository(AppDbContext dbContext) : IGmai
         dbContext.WorkItemAuditEntries.Add(GmailDraftExportAudit.Create(
             export,
             export.RequestedBy,
-            WorkItemAuditAction.GmailDraftExportRequested,
+            GmailDraftExportAudit.Action(export.Provider, WorkItemAuditAction.GmailDraftExportRequested),
             export.CreatedAt,
-            $"Gmail draft export requested for approved revision {export.ApprovedRevision}."));
+            $"{export.Provider} draft export requested for approved revision {export.ApprovedRevision}."));
         await dbContext.SaveChangesAsync(cancellationToken);
         await transaction.CommitAsync(cancellationToken);
         return (GmailDraftExportPersistenceMapper.ToDomain(record), true);
     }
 
+    public Task<GmailDraftExport?> ClaimPendingAsync(
+        string destinationMailboxId,
+        TimeSpan leaseDuration,
+        DateTimeOffset now,
+        CancellationToken cancellationToken = default) =>
+        ClaimPendingAsync(DraftExportProvider.Gmail, destinationMailboxId, leaseDuration, now, cancellationToken);
+
     public async Task<GmailDraftExport?> ClaimPendingAsync(
+        DraftExportProvider provider,
         string destinationMailboxId,
         TimeSpan leaseDuration,
         DateTimeOffset now,
@@ -66,7 +75,7 @@ internal sealed class GmailDraftExportRepository(AppDbContext dbContext) : IGmai
         await using var transaction = await dbContext.Database.BeginTransactionAsync(cancellationToken);
         var timestamp = now.ToUniversalTime();
         var expired = await dbContext.GmailDraftExports.AsNoTracking()
-            .Where(export => export.Status == GmailDraftExportStatus.InProgress.ToString() && export.LeaseExpiresAt <= timestamp)
+            .Where(export => export.Provider == provider.ToString() && export.Status == GmailDraftExportStatus.InProgress.ToString() && export.LeaseExpiresAt <= timestamp)
             .OrderBy(export => export.LeaseExpiresAt)
             .Select(export => new { export.Id, export.WorkItemId })
             .FirstOrDefaultAsync(cancellationToken);
@@ -82,10 +91,10 @@ internal sealed class GmailDraftExportRepository(AppDbContext dbContext) : IGmai
                     GmailDraftExportPersistenceMapper.Update(expiredRecord, expiredExport);
                     dbContext.WorkItemAuditEntries.Add(GmailDraftExportAudit.Create(
                         expiredExport,
-                        GmailDraftExportAudit.WorkerActorId,
-                        WorkItemAuditAction.GmailDraftExportNeedsReconciliation,
+                        GmailDraftExportAudit.WorkerActorId(expiredExport.Provider),
+                        GmailDraftExportAudit.Action(expiredExport.Provider, WorkItemAuditAction.GmailDraftExportNeedsReconciliation),
                         timestamp,
-                        "The Gmail draft export claim expired; provider outcome requires manual reconciliation."));
+                        $"The {expiredExport.Provider} draft export claim expired; provider outcome requires manual reconciliation."));
                     await dbContext.SaveChangesAsync(cancellationToken);
                 }
             }
@@ -94,7 +103,7 @@ internal sealed class GmailDraftExportRepository(AppDbContext dbContext) : IGmai
         }
 
         var candidate = await dbContext.GmailDraftExports.AsNoTracking()
-            .Where(export => export.Status == GmailDraftExportStatus.Pending.ToString())
+            .Where(export => export.Provider == provider.ToString() && export.Status == GmailDraftExportStatus.Pending.ToString())
             .OrderBy(export => export.CreatedAt)
             .ThenBy(export => export.Id)
             .Select(export => new { export.Id, export.WorkItemId })
@@ -120,10 +129,10 @@ internal sealed class GmailDraftExportRepository(AppDbContext dbContext) : IGmai
             GmailDraftExportPersistenceMapper.Update(record, exportForOldMailbox);
             dbContext.WorkItemAuditEntries.Add(GmailDraftExportAudit.Create(
                 exportForOldMailbox,
-                GmailDraftExportAudit.WorkerActorId,
-                WorkItemAuditAction.GmailDraftExportCancelled,
+                GmailDraftExportAudit.WorkerActorId(exportForOldMailbox.Provider),
+                GmailDraftExportAudit.Action(exportForOldMailbox.Provider, WorkItemAuditAction.GmailDraftExportCancelled),
                 timestamp,
-                "Pending Gmail draft export cancelled because its destination is no longer configured."));
+                $"Pending {exportForOldMailbox.Provider} draft export cancelled because its destination is no longer configured."));
             await dbContext.SaveChangesAsync(cancellationToken);
             await transaction.CommitAsync(cancellationToken);
             return null;
@@ -140,10 +149,10 @@ internal sealed class GmailDraftExportRepository(AppDbContext dbContext) : IGmai
             GmailDraftExportPersistenceMapper.Update(record, exportToClaim);
             dbContext.WorkItemAuditEntries.Add(GmailDraftExportAudit.Create(
                 exportToClaim,
-                GmailDraftExportAudit.WorkerActorId,
-                WorkItemAuditAction.GmailDraftExportCancelled,
+                GmailDraftExportAudit.WorkerActorId(exportToClaim.Provider),
+                GmailDraftExportAudit.Action(exportToClaim.Provider, WorkItemAuditAction.GmailDraftExportCancelled),
                 timestamp,
-                "Pending Gmail draft export cancelled because its approved revision is no longer current."));
+                $"Pending {exportToClaim.Provider} draft export cancelled because its approved revision is no longer current."));
             await dbContext.SaveChangesAsync(cancellationToken);
             await transaction.CommitAsync(cancellationToken);
             return null;
@@ -154,10 +163,10 @@ internal sealed class GmailDraftExportRepository(AppDbContext dbContext) : IGmai
         GmailDraftExportPersistenceMapper.Update(record, exportToClaim);
         dbContext.WorkItemAuditEntries.Add(GmailDraftExportAudit.Create(
             exportToClaim,
-            GmailDraftExportAudit.WorkerActorId,
-            WorkItemAuditAction.GmailDraftExportClaimed,
+            GmailDraftExportAudit.WorkerActorId(exportToClaim.Provider),
+            GmailDraftExportAudit.Action(exportToClaim.Provider, WorkItemAuditAction.GmailDraftExportClaimed),
             timestamp,
-            $"Gmail draft export claimed for attempt {attemptId:D}."));
+            $"{exportToClaim.Provider} draft export claimed for attempt {attemptId:D}."));
         await dbContext.SaveChangesAsync(cancellationToken);
         await transaction.CommitAsync(cancellationToken);
         return GmailDraftExportPersistenceMapper.ToDomain(record);
@@ -168,10 +177,20 @@ internal sealed class GmailDraftExportRepository(AppDbContext dbContext) : IGmai
         Guid attemptId,
         string gmailDraftId,
         DateTimeOffset now,
+        CancellationToken cancellationToken = default) => CompleteAsync(
+            DraftExportProvider.Gmail, exportId, attemptId, gmailDraftId, now, cancellationToken);
+
+    public Task<GmailDraftExportTransition> CompleteAsync(
+        DraftExportProvider provider,
+        Guid exportId,
+        Guid attemptId,
+        string externalDraftId,
+        DateTimeOffset now,
         CancellationToken cancellationToken = default) => MutateCallbackAsync(
             exportId,
+            provider,
             now,
-            export => export.Complete(attemptId, gmailDraftId, now),
+            export => export.Complete(attemptId, externalDraftId, now),
             cancellationToken);
 
     public Task<GmailDraftExportTransition> FailAsync(
@@ -179,11 +198,32 @@ internal sealed class GmailDraftExportRepository(AppDbContext dbContext) : IGmai
         Guid attemptId,
         GmailDraftExportFailureKind failureKind,
         DateTimeOffset now,
+        CancellationToken cancellationToken = default) => FailAsync(
+            DraftExportProvider.Gmail, exportId, attemptId, failureKind, now, cancellationToken);
+
+    public Task<GmailDraftExportTransition> FailAsync(
+        DraftExportProvider provider,
+        Guid exportId,
+        Guid attemptId,
+        GmailDraftExportFailureKind failureKind,
+        DateTimeOffset now,
         CancellationToken cancellationToken = default) => MutateCallbackAsync(
             exportId,
+            provider,
             now,
             export => export.Fail(attemptId, failureKind, now),
             cancellationToken);
+
+    public Task<GmailDraftExport?> RetryAfterManualCheckAsync(
+        Guid workItemId,
+        Guid exportId,
+        int expectedWorkItemVersion,
+        string destinationMailboxId,
+        string reviewerId,
+        DateTimeOffset now,
+        CancellationToken cancellationToken = default) => RetryAfterManualCheckAsync(
+            workItemId, exportId, expectedWorkItemVersion, destinationMailboxId, reviewerId,
+            DraftExportProvider.Gmail, now, cancellationToken);
 
     public async Task<GmailDraftExport?> RetryAfterManualCheckAsync(
         Guid workItemId,
@@ -191,6 +231,7 @@ internal sealed class GmailDraftExportRepository(AppDbContext dbContext) : IGmai
         int expectedWorkItemVersion,
         string destinationMailboxId,
         string reviewerId,
+        DraftExportProvider provider,
         DateTimeOffset now,
         CancellationToken cancellationToken = default)
     {
@@ -203,6 +244,8 @@ internal sealed class GmailDraftExportRepository(AppDbContext dbContext) : IGmai
         if (record is null || record.WorkItemId != workItemId)
             return null;
         var export = GmailDraftExportPersistenceMapper.ToDomain(record);
+        if (export.Provider != provider)
+            return null;
         EnsureDestinationMailbox(export, destinationMailboxId);
         await LoadAndRequireCurrentApprovedRevisionAsync(workItem, export, cancellationToken);
         Apply(() => export.RequeueAfterManualCheck(true, now));
@@ -210,13 +253,25 @@ internal sealed class GmailDraftExportRepository(AppDbContext dbContext) : IGmai
         dbContext.WorkItemAuditEntries.Add(GmailDraftExportAudit.Create(
             export,
             reviewerId,
-            WorkItemAuditAction.GmailDraftExportRetryAuthorized,
+            GmailDraftExportAudit.Action(export.Provider, WorkItemAuditAction.GmailDraftExportRetryAuthorized),
             now,
-            $"Reviewer confirmed no Gmail draft exists and authorized retry of revision {export.ApprovedRevision}."));
+            $"Reviewer confirmed no {export.Provider} draft exists and authorized retry of revision {export.ApprovedRevision}."));
         await dbContext.SaveChangesAsync(cancellationToken);
         await transaction.CommitAsync(cancellationToken);
         return GmailDraftExportPersistenceMapper.ToDomain(record);
     }
+
+    public Task<GmailDraftExport?> ReconcileAsync(
+        Guid workItemId,
+        Guid exportId,
+        int expectedWorkItemVersion,
+        string destinationMailboxId,
+        string reviewerId,
+        string gmailDraftId,
+        DateTimeOffset now,
+        CancellationToken cancellationToken = default) => ReconcileAsync(
+            workItemId, exportId, expectedWorkItemVersion, destinationMailboxId, reviewerId,
+            gmailDraftId, DraftExportProvider.Gmail, now, cancellationToken);
 
     public async Task<GmailDraftExport?> ReconcileAsync(
         Guid workItemId,
@@ -225,6 +280,7 @@ internal sealed class GmailDraftExportRepository(AppDbContext dbContext) : IGmai
         string destinationMailboxId,
         string reviewerId,
         string gmailDraftId,
+        DraftExportProvider provider,
         DateTimeOffset now,
         CancellationToken cancellationToken = default)
     {
@@ -237,8 +293,10 @@ internal sealed class GmailDraftExportRepository(AppDbContext dbContext) : IGmai
         if (record is null || record.WorkItemId != workItemId)
             return null;
         var export = GmailDraftExportPersistenceMapper.ToDomain(record);
+        if (export.Provider != provider)
+            return null;
         EnsureDestinationMailbox(export, destinationMailboxId);
-        if (export.Status == GmailDraftExportStatus.Succeeded && export.GmailDraftId == gmailDraftId)
+        if (export.Status == GmailDraftExportStatus.Succeeded && export.ExternalDraftId == gmailDraftId)
         {
             await transaction.CommitAsync(cancellationToken);
             return export;
@@ -248,9 +306,9 @@ internal sealed class GmailDraftExportRepository(AppDbContext dbContext) : IGmai
         dbContext.WorkItemAuditEntries.Add(GmailDraftExportAudit.Create(
             export,
             reviewerId,
-            WorkItemAuditAction.GmailDraftExportReconciled,
+            GmailDraftExportAudit.Action(export.Provider, WorkItemAuditAction.GmailDraftExportReconciled),
             now,
-            $"Reviewer reconciled Gmail draft export with provider draft ID {gmailDraftId}."));
+            $"Reviewer reconciled {export.Provider} draft export with provider draft ID {gmailDraftId}."));
         await dbContext.SaveChangesAsync(cancellationToken);
         await transaction.CommitAsync(cancellationToken);
         return GmailDraftExportPersistenceMapper.ToDomain(record);
@@ -258,6 +316,7 @@ internal sealed class GmailDraftExportRepository(AppDbContext dbContext) : IGmai
 
     private async Task<GmailDraftExportTransition> MutateCallbackAsync(
         Guid exportId,
+        DraftExportProvider provider,
         DateTimeOffset now,
         Func<GmailDraftExport, GmailDraftExportTransition> transition,
         CancellationToken cancellationToken)
@@ -279,24 +338,29 @@ internal sealed class GmailDraftExportRepository(AppDbContext dbContext) : IGmai
         }
 
         var export = GmailDraftExportPersistenceMapper.ToDomain(record);
+        if (export.Provider != provider)
+        {
+            await transaction.CommitAsync(cancellationToken);
+            return GmailDraftExportTransition.Stale;
+        }
         var result = transition(export);
         if (result is GmailDraftExportTransition.Applied or GmailDraftExportTransition.LeaseExpired)
         {
             GmailDraftExportPersistenceMapper.Update(record, export);
             var action = export.Status switch
             {
-                GmailDraftExportStatus.Succeeded => WorkItemAuditAction.GmailDraftExportSucceeded,
-                GmailDraftExportStatus.Failed => WorkItemAuditAction.GmailDraftExportFailed,
-                _ => WorkItemAuditAction.GmailDraftExportNeedsReconciliation,
+                GmailDraftExportStatus.Succeeded => GmailDraftExportAudit.Action(export.Provider, WorkItemAuditAction.GmailDraftExportSucceeded),
+                GmailDraftExportStatus.Failed => GmailDraftExportAudit.Action(export.Provider, WorkItemAuditAction.GmailDraftExportFailed),
+                _ => GmailDraftExportAudit.Action(export.Provider, WorkItemAuditAction.GmailDraftExportNeedsReconciliation),
             };
             var summary = export.Status switch
             {
-                GmailDraftExportStatus.Succeeded => $"Gmail draft export succeeded with provider draft ID {export.GmailDraftId}.",
-                GmailDraftExportStatus.Failed => "Gmail draft export failed before the provider call started.",
-                _ => "Gmail draft creation may have succeeded; manual reconciliation is required.",
+                GmailDraftExportStatus.Succeeded => $"{export.Provider} draft export succeeded with provider draft ID {export.ExternalDraftId}.",
+                GmailDraftExportStatus.Failed => $"{export.Provider} draft export failed before the provider call started.",
+                _ => $"{export.Provider} draft creation may have succeeded; manual reconciliation is required.",
             };
             dbContext.WorkItemAuditEntries.Add(GmailDraftExportAudit.Create(
-                export, GmailDraftExportAudit.WorkerActorId, action, now, summary));
+                export, GmailDraftExportAudit.WorkerActorId(export.Provider), action, now, summary));
             await dbContext.SaveChangesAsync(cancellationToken);
         }
         await transaction.CommitAsync(cancellationToken);

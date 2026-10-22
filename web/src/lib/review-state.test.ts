@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { ApiError } from "./api.ts";
-import { canApproveDraft, canManuallyResolveGmailDraftExport, canRequestGmailDraft, canVerifyFact, loaded, loadFailed, loading, mutationFailure } from "./review-state.ts";
+import { canApproveDraft, canManuallyResolveGmailDraftExport, canRequestDraftExport, canVerifyFact, loaded, loadFailed, loading, mutationFailure } from "./review-state.ts";
 
 test("inbox state exposes loading, loaded, and request errors", () => {
   assert.deepEqual(loading(), { status: "loading" });
@@ -31,8 +31,9 @@ test("a draft can only be approved when the exact persisted revision is visible"
   assert.equal(canApproveDraft("Approved", "Response", "Please confirm.", "Response", "Please confirm."), false);
 });
 
-test("a Gmail draft request requires the current approved snapshot and explicit mailbox and recipient confirmation", () => {
+test("an external draft request requires the current approved snapshot and explicit mailbox and recipient confirmation", () => {
   const input = {
+    provider: "Gmail" as const,
     enabled: true,
     workItemStatus: "InReview",
     reviewerOwnsItem: true,
@@ -48,22 +49,32 @@ test("a Gmail draft request requires the current approved snapshot and explicit 
     exports: [],
     mailboxId: "test-mailbox",
   };
-  assert.equal(canRequestGmailDraft(input), true);
-  assert.equal(canRequestGmailDraft({ ...input, enabled: false }), false);
-  assert.equal(canRequestGmailDraft({ ...input, workItemStatus: "Resolved" }), false);
-  assert.equal(canRequestGmailDraft({ ...input, revisionStatus: "Draft" }), false);
-  assert.equal(canRequestGmailDraft({ ...input, visibleBody: "Edited unsaved response" }), false);
-  assert.equal(canRequestGmailDraft({ ...input, recipientConfirmed: false }), false);
-  assert.equal(canRequestGmailDraft({ ...input, confirmedRecipient: "other@example.test" }), false);
-  assert.equal(canRequestGmailDraft({ ...input, reviewerOwnsItem: false }), false);
-  assert.equal(canRequestGmailDraft({
+  assert.equal(canRequestDraftExport(input), true);
+  assert.equal(canRequestDraftExport({ ...input, enabled: false }), false);
+  assert.equal(canRequestDraftExport({ ...input, workItemStatus: "Resolved" }), false);
+  assert.equal(canRequestDraftExport({ ...input, revisionStatus: "Draft" }), false);
+  assert.equal(canRequestDraftExport({ ...input, visibleBody: "Edited unsaved response" }), false);
+  assert.equal(canRequestDraftExport({ ...input, recipientConfirmed: false }), false);
+  assert.equal(canRequestDraftExport({ ...input, confirmedRecipient: "other@example.test" }), false);
+  assert.equal(canRequestDraftExport({ ...input, reviewerOwnsItem: false }), false);
+  assert.equal(canRequestDraftExport({
     ...input,
     exports: [{
       id: "export-1", approvedRevision: 2, destinationMailboxId: "test-mailbox", recipientEmail: "sender@example.test",
       contentFingerprint: "", requestedBy: "reviewer", createdAt: "", updatedAt: "", completedAt: null,
-      status: "Pending", attemptCount: 0, gmailDraftId: null, failureKind: null,
+      status: "Pending", attemptCount: 0, provider: "Gmail", externalDraftId: null, gmailDraftId: null, failureKind: null,
     }],
   }), false);
+  assert.equal(canRequestDraftExport({
+    ...input,
+    provider: "Outlook",
+    exports: [{
+      id: "export-outlook", approvedRevision: 2, destinationMailboxId: "test-mailbox", recipientEmail: "sender@example.test",
+      contentFingerprint: "", requestedBy: "reviewer", createdAt: "", updatedAt: "", completedAt: null,
+      status: "Pending", attemptCount: 0, provider: "Outlook", externalDraftId: null, gmailDraftId: null, failureKind: null,
+    }],
+  }), false);
+  assert.equal(canRequestDraftExport({ ...input, provider: "Outlook" }), true);
 });
 
 test("manual export resolution is available only after a failed or ambiguous attempt", () => {

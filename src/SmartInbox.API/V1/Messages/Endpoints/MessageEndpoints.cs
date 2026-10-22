@@ -42,7 +42,9 @@ public static class MessageEndpoints
             request.Subject!,
             request.BodyText!,
             request.ReceivedAt ?? default,
-            attachments), cancellationToken);
+            attachments,
+            request.ExternalInternetMessageId,
+            request.ExternalRecipientEmails), cancellationToken);
         var response = new ReceiveInboundMessageResponseV1(result.Id, "Received");
         return result.Created
             ? Results.Accepted($"/api/v1/messages/{result.Id:D}", response)
@@ -83,6 +85,8 @@ public static class MessageEndpoints
         message.MailboxId,
         message.ExternalMessageId,
         message.ExternalThreadId,
+        message.ExternalInternetMessageId,
+        message.ExternalRecipientEmails,
         message.SenderEmail,
         message.SenderName,
         message.Subject,

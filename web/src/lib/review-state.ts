@@ -1,4 +1,4 @@
-import { ApiError, type GmailDraftExport } from "./api.ts";
+import { ApiError, type DraftExportProvider, type GmailDraftExport } from "./api.ts";
 
 export type LoadState<T> =
   | { status: "loading" }
@@ -30,7 +30,8 @@ export function canApproveDraft(
     persistedBody === visibleBody;
 }
 
-export function canRequestGmailDraft(input: {
+export function canRequestDraftExport(input: {
+  provider: DraftExportProvider;
   enabled: boolean;
   workItemStatus: string;
   reviewerOwnsItem: boolean;
@@ -60,9 +61,12 @@ export function canRequestGmailDraft(input: {
   if (!eligible) return false;
   return !input.exports.some(exported =>
     exported.approvedRevision === input.revision &&
+    exported.provider === input.provider &&
     exported.destinationMailboxId === input.mailboxId &&
     exported.recipientEmail === input.savedRecipient);
 }
+
+export const canRequestGmailDraft = canRequestDraftExport;
 
 export function canManuallyResolveGmailDraftExport(status: string): boolean {
   return status === "Failed" || status === "NeedsReconciliation";

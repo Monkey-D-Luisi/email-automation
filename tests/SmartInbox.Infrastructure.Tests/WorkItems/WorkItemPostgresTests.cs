@@ -102,11 +102,17 @@ public sealed class WorkItemPostgresTests(PostgresFixture fixture)
         await using (var context = fixture.CreateContext())
         {
             await context.Database.ExecuteSqlRawAsync(
+                "DELETE FROM \"__EFMigrationsHistory\" WHERE \"MigrationId\" = '20261022103328_AddOutlookAuditActions'");
+            await context.Database.ExecuteSqlRawAsync(
+                "DELETE FROM \"__EFMigrationsHistory\" WHERE \"MigrationId\" = '20261022101620_AddOutlookProviderSupport'");
+            await context.Database.ExecuteSqlRawAsync(
                 "DELETE FROM \"__EFMigrationsHistory\" WHERE \"MigrationId\" = '20261021142118_AddGmailDraftExports'");
             await context.Database.ExecuteSqlRawAsync(
                 "DELETE FROM \"__EFMigrationsHistory\" WHERE \"MigrationId\" = '20261021122611_AddHumanReviewAndDrafts'");
             await context.Database.ExecuteSqlRawAsync(
                 "DROP TABLE gmail_draft_exports, response_draft_revisions, work_item_audit_entries, work_item_facts, response_drafts, work_items CASCADE");
+            await context.Database.ExecuteSqlRawAsync(
+                "ALTER TABLE inbound_messages DROP COLUMN \"ExternalInternetMessageId\", DROP COLUMN \"ExternalRecipientEmailsJson\"");
             await context.Database.MigrateAsync();
         }
 
@@ -342,6 +348,31 @@ public sealed class WorkItemPostgresTests(PostgresFixture fixture)
     }
 
     [Fact]
+    public async Task Outlook_unknown_export_audit_names_the_provider_for_manual_reconciliation()
+    {
+        await fixture.ResetAsync();
+        var (workItemId, _) = await CreatePendingExportAsync(DraftExportProvider.Outlook);
+        using var services = fixture.CreateServiceProvider();
+        using var scope = services.CreateScope();
+        var exports = scope.ServiceProvider.GetRequiredService<IGmailDraftExportRepository>();
+        var claim = Assert.IsType<GmailDraftExport>(await exports.ClaimPendingAsync(
+            DraftExportProvider.Outlook, "test-mailbox", TimeSpan.FromMinutes(5), Now.AddMinutes(5)));
+
+        Assert.Equal(GmailDraftExportTransition.Applied, await exports.FailAsync(
+            DraftExportProvider.Outlook,
+            claim.Id,
+            claim.AttemptId!.Value,
+            GmailDraftExportFailureKind.ProviderOutcomeUnknown,
+            Now.AddMinutes(6)));
+
+        var audit = Assert.Single(
+            await scope.ServiceProvider.GetRequiredService<IWorkItemRepository>().GetHistoryAsync(workItemId) ?? [],
+            entry => entry.Action == WorkItemAuditAction.OutlookDraftExportNeedsReconciliation);
+        Assert.Contains("Outlook draft creation", audit.Summary);
+        Assert.DoesNotContain("Gmail draft creation", audit.Summary);
+    }
+
+    [Fact]
     public async Task Editing_the_approved_draft_cancels_a_pending_export_before_dispatch()
     {
         await fixture.ResetAsync();
@@ -363,7 +394,8 @@ public sealed class WorkItemPostgresTests(PostgresFixture fixture)
             entry => entry.Action == WorkItemAuditAction.GmailDraftExportCancelled);
     }
 
-    private async Task<(Guid WorkItemId, GmailDraftExport Export)> CreatePendingExportAsync()
+    private async Task<(Guid WorkItemId, GmailDraftExport Export)> CreatePendingExportAsync(
+        DraftExportProvider provider = DraftExportProvider.Gmail)
     {
         var messageId = await AddProcessedMessageAsync(senderEmail: "alex@example.test");
         var workItemId = await GetWorkItemIdAsync(messageId);
@@ -383,7 +415,7 @@ public sealed class WorkItemPostgresTests(PostgresFixture fixture)
         item.ApproveDraft(1, "reviewer-1", Now.AddMinutes(3));
         await workItems.SaveAsync(item);
 
-        var export = GmailDraftExport.Create(item, "test-mailbox", "alex@example.test", "reviewer-1", Now.AddMinutes(4));
+        var export = GmailDraftExport.Create(item, "test-mailbox", "alex@example.test", "reviewer-1", Now.AddMinutes(4), provider);
         var result = await scope.ServiceProvider.GetRequiredService<IGmailDraftExportRepository>()
             .CreateOrGetAsync(export, item.Version);
         Assert.True(result.Created);

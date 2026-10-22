@@ -10,6 +10,15 @@ const [ingestion, exportWorkflow, fixture, mapperSource] = await Promise.all([
   readJson("fixtures/gmail-message.json"),
   readFile(new URL("scripts/gmail-message-mapper.js", integrationRoot), "utf8"),
 ]);
+const [outlookIngestion, outlookExport, outlookFixture, outlookHtmlFixture, outlookMissingSenderFixture, outlookMapperSource, outlookErrors] = await Promise.all([
+  readJson("outlook-ingestion.json"),
+  readJson("outlook-approved-draft-export.json"),
+  readJson("fixtures/outlook-message.json"),
+  readJson("fixtures/outlook-message-html.json"),
+  readJson("fixtures/outlook-message-missing-sender.json"),
+  readFile(new URL("scripts/outlook-message-mapper.js", integrationRoot), "utf8"),
+  readJson("fixtures/outlook-graph-errors.json"),
+]);
 
 const normalizeSourceNewlines = source => source.replace(/\r\n?/g, "\n").trim();
 
@@ -20,6 +29,12 @@ function executeSyntheticFixture() {
 
 function executeMapper(messages, sourceForParity = mapperSource) {
   const mapper = ingestion.nodes.find(node => node.name === "Map and Validate Gmail Message").parameters.jsCode;
+  assert.equal(normalizeSourceNewlines(mapper), normalizeSourceNewlines(sourceForParity));
+  return new Function("$input", mapper)({ all: () => messages.map(json => ({ json })) });
+}
+
+function executeOutlookMapper(messages, sourceForParity = outlookMapperSource) {
+  const mapper = outlookIngestion.nodes.find(node => node.name === "Map and Validate Outlook Message").parameters.jsCode;
   assert.equal(normalizeSourceNewlines(mapper), normalizeSourceNewlines(sourceForParity));
   return new Function("$input", mapper)({ all: () => messages.map(json => ({ json })) });
 }
@@ -243,4 +258,136 @@ test("Smart Inbox service tokens use n8n-managed Bearer Auth credentials, not co
   }
   assert.equal(JSON.stringify([ingestion, exportWorkflow]).includes("SMARTINBOX_GMAIL_INGESTION_TOKEN"), false);
   assert.equal(JSON.stringify([ingestion, exportWorkflow]).includes("SMARTINBOX_GMAIL_DRAFT_EXPORT_TOKEN"), false);
+});
+
+test("Outlook Graph workflows are inactive, credential-free exports with no send operation", () => {
+  for (const workflow of [outlookIngestion, outlookExport]) {
+    assert.equal(workflow.active, false);
+    assert.ok(workflow.nodes.length > 0);
+    const names = new Set(workflow.nodes.map(node => node.name));
+    assert.equal(names.size, workflow.nodes.length);
+    for (const [sourceName, outputs] of Object.entries(workflow.connections)) {
+      assert.ok(names.has(sourceName), `Unknown connection source: ${sourceName}`);
+      for (const branches of Object.values(outputs)) for (const branch of branches) for (const edge of branch)
+        assert.ok(names.has(edge.node), `Unknown connection target: ${edge.node}`);
+    }
+    assert.doesNotMatch(JSON.stringify(workflow), /[\w.+-]+@(?:outlook|hotmail|live)\.com\b/i);
+    assert.equal(JSON.stringify(workflow).includes("localhost"), false);
+    for (const node of workflow.nodes) assert.equal(node.credentials, undefined);
+  }
+  const serialized = JSON.stringify([outlookIngestion, outlookExport]);
+  assert.doesNotMatch(serialized, /Mail\.Send|sendMail|send message|n8n-nodes-base\.microsoftOutlook/i);
+  assert.equal(outlookExport.nodes.filter(node => node.type === "n8n-nodes-base.httpRequest" && node.parameters.method === "POST" && node.parameters.url === "https://graph.microsoft.com/v1.0/me/messages").length, 1);
+  assert.equal(outlookExport.nodes.find(node => node.name === "Create Outlook Draft").retryOnFail, undefined);
+});
+
+test("Outlook polling is limited to a configured test folder and cutoff, verifies /me, requests immutable text IDs, and paginates Graph next links", () => {
+  const schedule = outlookIngestion.nodes.find(node => node.name === "Poll Outlook Test Folder");
+  const scope = outlookIngestion.nodes.find(node => node.name === "Require Outlook Test Scope");
+  const identity = outlookIngestion.nodes.find(node => node.name === "Verify Outlook Mailbox");
+  const list = outlookIngestion.nodes.find(node => node.name === "List Outlook Test Folder Messages");
+  assert.equal(schedule.type, "n8n-nodes-base.scheduleTrigger");
+  assert.match(scope.parameters.jsCode, /SMARTINBOX_OUTLOOK_TEST_FOLDER_ID/);
+  assert.match(scope.parameters.jsCode, /SMARTINBOX_OUTLOOK_RECEIVED_AFTER/);
+  assert.match(scope.parameters.jsCode, /SMARTINBOX_OUTLOOK_MODE.*disabled/);
+  assert.match(scope.parameters.jsCode, /reservedFolders/);
+  assert.equal(identity.parameters.url, "https://graph.microsoft.com/v1.0/me?$select=mail,userPrincipalName");
+  assert.equal(outlookIngestion.connections["Confirm Outlook Mailbox"].main[0][0].node, "Outlook Mailbox Matches?");
+  assert.equal(outlookIngestion.connections["Outlook Mailbox Matches?"].main[0][0].node, "Build Outlook Graph Poll Request");
+  assert.equal(outlookIngestion.connections["Outlook Mailbox Matches?"].main[1][0].node, "Safe Outlook Graph Poll Diagnostic");
+  assert.match(list.parameters.url, /SMARTINBOX_OUTLOOK_TEST_FOLDER_ID/);
+  assert.match(list.parameters.url, /SMARTINBOX_OUTLOOK_RECEIVED_AFTER/);
+  assert.match(list.parameters.headerParameters.parameters[0].value, /IdType="ImmutableId"/);
+  assert.match(list.parameters.headerParameters.parameters[0].value, /outlook\.body-content-type="text"/);
+  assert.equal(list.parameters.options.pagination.pagination.paginationMode, "responseContainsNextURL");
+  assert.match(list.parameters.options.pagination.pagination.nextURL, /@odata\.nextLink/);
+  assert.match(list.parameters.options.pagination.pagination.completeExpression, /@odata\.nextLink/);
+  assert.equal(list.parameters.options.response.response.neverError, true);
+  assert.equal(outlookIngestion.nodes.some(node => /download.*attachment|mark.*read|move.*message|delete.*message/i.test(node.name)), false);
+});
+
+test("Outlook mapper preserves per-message Graph identity, internet ID, conversation and metadata across multi-item and duplicate deliveries", () => {
+  const differentInConversation = { ...outlookFixture, id: "AAMkAGI2-test-message-002", internetMessageId: "<synthetic-outlook-002@example.test>" };
+  const mapped = executeOutlookMapper([outlookFixture, differentInConversation, outlookFixture]);
+  assert.equal(mapped.length, 3);
+  assert.deepEqual(mapped.map(item => item.json.valid), [true, true, true]);
+  assert.deepEqual(mapped.map(item => item.json.payload.graphMessageId), [outlookFixture.id, differentInConversation.id, outlookFixture.id]);
+  assert.equal(mapped[0].json.payload.conversationId, mapped[1].json.payload.conversationId);
+  assert.notEqual(mapped[0].json.payload.graphMessageId, mapped[1].json.payload.graphMessageId);
+  assert.equal(mapped[0].json.payload.internetMessageId, outlookFixture.internetMessageId);
+  assert.equal(mapped[0].json.payload.recipientEmails.length, 2);
+  assert.equal(mapped[0].json.payload.attachments[0].externalAttachmentId, "synthetic-attachment-001");
+  assert.equal(mapped[0].json.correlationId, mapped[2].json.correlationId);
+  assert.notEqual(mapped[0].json.correlationId, mapped[1].json.correlationId);
+});
+
+test("Outlook mapper converts HTML to inert text, tolerates a missing sender, and quarantines malformed or oversized content", () => {
+  const [html] = executeOutlookMapper([outlookHtmlFixture]);
+  assert.equal(html.json.valid, true);
+  assert.equal(html.json.payload.bodyText, "Invoice\nA & B !");
+  assert.doesNotMatch(html.json.payload.bodyText, /doNotRun/);
+  const [missingSender] = executeOutlookMapper([outlookMissingSenderFixture]);
+  assert.equal(missingSender.json.valid, true);
+  assert.equal(missingSender.json.payload.senderEmail, null);
+
+  const cases = [
+    [{ ...outlookFixture, id: "" }, "invalid-outlook-message-id"],
+    [{ ...outlookFixture, subject: "unsafe\r\nBcc: victim@example.test" }, "invalid-subject"],
+    [{ ...outlookFixture, receivedDateTime: "not-a-date" }, "invalid-received-at"],
+    [{ ...outlookFixture, body: { contentType: "text", content: "x".repeat(40001) } }, "message-body-too-long"],
+    [{ ...outlookFixture, from: { emailAddress: { address: "invalid" } } }, "invalid-sender-address"],
+    [{ ...outlookFixture, toRecipients: Array.from({ length: 101 }, () => ({ emailAddress: { address: "a@example.test" } })) }, "too-many-recipients"],
+    [{ ...outlookFixture, attachments: Array.from({ length: 11 }, (_, index) => ({ id: String(index), name: "file", contentType: "text/plain", size: 1 })) }, "too-many-attachments"],
+  ];
+  for (const [message, expectedReason] of cases) {
+    const [result] = executeOutlookMapper([message]);
+    assert.equal(result.json.valid, false);
+    assert.equal(result.json.reason, expectedReason);
+    assert.equal("payload" in result.json, false);
+  }
+});
+
+test("Outlook Graph status handling respects Retry-After, bounds retries, and does not retry authentication failures", () => {
+  const classify = outlookIngestion.nodes.find(node => node.name === "Classify Outlook Graph Poll Response").parameters.jsCode;
+  const run = (response, attempt = 1) => new Function("$input", "$", classify)(
+    { all: () => [{ json: response }] },
+    () => ({ first: () => ({ json: { attempt } }) }),
+  )[0].json;
+  const throttled = run({ statusCode: 429, headers: { "retry-after": "30" }, body: { error: { code: "TooManyRequests" } } });
+  assert.equal(throttled.retry, true);
+  assert.equal(throttled.retryAfterSeconds, 30);
+  assert.equal(run({ statusCode: 503, headers: {}, body: {} }, 3).retry, false);
+  assert.equal(run({ statusCode: 401, headers: {}, body: {} }).retry, false);
+  assert.deepEqual(outlookErrors.map(error => error.statusCode), [401, 403, 429, 500, 504]);
+});
+
+test("Outlook draft creation uses the claimed approved snapshot and only accepts a confirmed Graph draft response", () => {
+  const create = outlookExport.nodes.find(node => node.name === "Create Outlook Draft");
+  assert.equal(create.parameters.method, "POST");
+  assert.equal(create.parameters.url, "https://graph.microsoft.com/v1.0/me/messages");
+  assert.match(create.parameters.jsonBody, /body\.claim\.subject/);
+  assert.match(create.parameters.jsonBody, /body\.claim\.body/);
+  assert.match(create.parameters.jsonBody, /body\.claim\.recipientEmail/);
+  assert.equal(create.parameters.headerParameters.parameters[0].value, 'IdType="ImmutableId"');
+  assert.equal(create.retryOnFail, undefined);
+  const validation = outlookExport.nodes.find(node => node.name === "Validate Outlook Draft Result").parameters.jsCode;
+  assert.match(validation, /statusCode[^\n]*201/);
+  assert.match(validation, /body\.isDraft === true/);
+  assert.match(validation, /body\.id/);
+  assert.equal(outlookExport.connections["Create Outlook Draft"].main[1][0].node, "Prepare Ambiguous Outlook Provider Outcome");
+  assert.equal(outlookExport.connections["Outlook Draft Created?"].main[1][0].node, "Prepare Ambiguous Outlook Provider Outcome");
+  assert.match(outlookExport.nodes.find(node => node.name === "Prepare Ambiguous Outlook Provider Outcome").parameters.jsCode, /ProviderOutcomeUnknown/);
+  assert.match(outlookExport.nodes.find(node => node.name === "Require Explicit Outlook Export Mode").parameters.jsCode, /disabled/);
+  assert.equal(outlookExport.nodes.find(node => node.name === "Create Outlook Draft").parameters.options.response.response.neverError, true);
+});
+
+test("Outlook live export verifies the Graph identity before claiming and preserves provider-specific callbacks", () => {
+  assert.equal(outlookExport.connections["Outlook Export Identity Matches?"].main[0][0].node, "Claim Outlook Export");
+  assert.equal(outlookExport.connections["Outlook Export Identity Matches?"].main[1][0].node, "Safe Outlook Export Identity Diagnostic");
+  assert.match(outlookExport.nodes.find(node => node.name === "Confirm Outlook Export Identity").parameters.jsCode, /SMARTINBOX_OUTLOOK_MAILBOX_ID/);
+  assert.match(outlookExport.nodes.find(node => node.name === "Claim Outlook Export").parameters.url, /integrations\/outlook\/draft-exports\/claim/);
+  assert.match(outlookExport.nodes.find(node => node.name === "Record Outlook Draft ID").parameters.jsonBody, /externalDraftId/);
+  assert.match(outlookExport.nodes.find(node => node.name === "Record Outlook Outcome Unknown").parameters.url, /integrations\/outlook\/draft-exports/);
+  assert.match(outlookExport.nodes.find(node => node.name === "Record Outlook Draft ID").parameters.url, /\/complete/);
+  assert.match(outlookExport.nodes.find(node => node.name === "Record Outlook Outcome Unknown").parameters.url, /\/fail/);
 });

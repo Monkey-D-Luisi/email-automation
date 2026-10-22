@@ -231,6 +231,8 @@ internal sealed class InboundMessageRepository(AppDbContext dbContext) : IInboun
         MailboxId = message.MailboxId,
         ExternalMessageId = message.ExternalMessageId,
         ExternalThreadId = message.ExternalThreadId,
+        ExternalInternetMessageId = message.ExternalInternetMessageId,
+        ExternalRecipientEmailsJson = JsonSerializer.Serialize(message.ExternalRecipientEmails, JsonOptions),
         SenderEmail = message.SenderEmail,
         SenderName = message.SenderName,
         Subject = message.Subject,
@@ -302,7 +304,10 @@ internal sealed class InboundMessageRepository(AppDbContext dbContext) : IInboun
             failureKind,
             record.FailureMessage,
             record.ProcessingRetryable,
-            record.NextAttemptAt);
+            record.NextAttemptAt,
+            record.ExternalInternetMessageId,
+            JsonSerializer.Deserialize<string[]>(record.ExternalRecipientEmailsJson, JsonOptions)
+                ?? throw new InvalidOperationException("The persisted recipient metadata is invalid."));
     }
 
     private static EmailClassification ToDomain(EmailClassificationRecord record)

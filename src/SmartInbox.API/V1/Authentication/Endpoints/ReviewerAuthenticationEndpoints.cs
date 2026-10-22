@@ -79,7 +79,8 @@ public static class ReviewerAuthenticationEndpoints
     private static IResult GetSessionAsync(
         HttpContext context,
         EmailDraftingOptions draftingOptions,
-        IOptions<GmailIntegrationOptions> gmailOptions)
+        IOptions<GmailIntegrationOptions> gmailOptions,
+        IOptions<OutlookIntegrationOptions> outlookOptions)
     {
         context.Response.Headers.CacheControl = "no-store";
         return Results.Ok(new
@@ -89,6 +90,8 @@ public static class ReviewerAuthenticationEndpoints
             aiDraftingEnabled = draftingOptions.Enabled,
             gmailDraftExportEnabled = gmailOptions.Value.Enabled,
             gmailDraftExportMailboxId = gmailOptions.Value.Enabled ? gmailOptions.Value.MailboxId : null,
+            outlookDraftExportEnabled = outlookOptions.Value.DraftExportConfigured,
+            outlookDraftExportMailboxId = outlookOptions.Value.DraftExportConfigured ? outlookOptions.Value.MailboxId : null,
         });
     }
 }

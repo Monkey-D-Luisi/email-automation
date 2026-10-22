@@ -18,6 +18,7 @@ public sealed class GmailDraftExport
     public string Subject { get; private set; } = string.Empty;
     public string Body { get; private set; } = string.Empty;
     public string ContentFingerprint { get; private set; } = string.Empty;
+    public DraftExportProvider Provider { get; private set; }
     public string RequestedBy { get; private set; } = string.Empty;
     public DateTimeOffset CreatedAt { get; private set; }
     public DateTimeOffset UpdatedAt { get; private set; }
@@ -27,7 +28,8 @@ public sealed class GmailDraftExport
     public Guid? AttemptId { get; private set; }
     public DateTimeOffset? ClaimedAt { get; private set; }
     public DateTimeOffset? LeaseExpiresAt { get; private set; }
-    public string? GmailDraftId { get; private set; }
+    public string? ExternalDraftId { get; private set; }
+    public string? GmailDraftId => Provider == DraftExportProvider.Gmail ? ExternalDraftId : null;
     public GmailDraftExportFailureKind? FailureKind { get; private set; }
 
     private GmailDraftExport() { }
@@ -37,9 +39,12 @@ public sealed class GmailDraftExport
         string destinationMailboxId,
         string confirmedRecipientEmail,
         string reviewerId,
-        DateTimeOffset now)
+        DateTimeOffset now,
+        DraftExportProvider provider = DraftExportProvider.Gmail)
     {
         ArgumentNullException.ThrowIfNull(workItem);
+        if (!Enum.IsDefined(provider))
+            throw new ArgumentOutOfRangeException(nameof(provider));
         if (string.IsNullOrWhiteSpace(reviewerId) || reviewerId.Length > 128)
             throw new ArgumentException("A reviewer identity is required.", nameof(reviewerId));
         if (string.IsNullOrWhiteSpace(destinationMailboxId) || destinationMailboxId.Length > 256 ||
@@ -47,10 +52,10 @@ public sealed class GmailDraftExport
             throw new ArgumentException("The destination mailbox identity is invalid.", nameof(destinationMailboxId));
 
         workItem.EnsureEditableBy(reviewerId);
-        var draft = workItem.Draft ?? throw new InvalidOperationException("A response draft is required before Gmail export.");
+        var draft = workItem.Draft ?? throw new InvalidOperationException("A response draft is required before external export.");
         var revision = draft.CurrentRevision;
         if (revision.Status != ResponseDraftStatus.Approved)
-            throw new InvalidOperationException("The current response draft revision must be approved before Gmail export.");
+            throw new InvalidOperationException("The current response draft revision must be approved before external export.");
         if (revision.Subject.Contains('\r') || revision.Subject.Contains('\n'))
             throw new ArgumentException("The draft subject cannot contain line breaks.", nameof(workItem));
 
@@ -78,6 +83,7 @@ public sealed class GmailDraftExport
                 recipient.Address,
                 revision.Subject,
                 revision.Body),
+            Provider = provider,
             RequestedBy = reviewerId,
             CreatedAt = timestamp,
             UpdatedAt = timestamp,
@@ -105,8 +111,9 @@ public sealed class GmailDraftExport
         Guid? attemptId,
         DateTimeOffset? claimedAt,
         DateTimeOffset? leaseExpiresAt,
-        string? gmailDraftId,
-        GmailDraftExportFailureKind? failureKind)
+        string? externalDraftId,
+        GmailDraftExportFailureKind? failureKind,
+        DraftExportProvider provider = DraftExportProvider.Gmail)
     {
         if (id == Guid.Empty || workItemId == Guid.Empty || draftId == Guid.Empty || draftRevisionId == Guid.Empty ||
             approvedRevision < 1 || string.IsNullOrWhiteSpace(destinationMailboxId) || destinationMailboxId.Length > 256 ||
@@ -114,7 +121,7 @@ public sealed class GmailDraftExport
             string.IsNullOrWhiteSpace(subject) || subject.Length > 998 || subject.Contains('\r') || subject.Contains('\n') ||
             string.IsNullOrWhiteSpace(body) || body.Length > 20_000 ||
             string.IsNullOrWhiteSpace(requestedBy) || requestedBy.Length > 128 || attemptCount < 0 ||
-            !Enum.IsDefined(status) || (failureKind is not null && !Enum.IsDefined(failureKind.Value)) ||
+            !Enum.IsDefined(status) || !Enum.IsDefined(provider) || (failureKind is not null && !Enum.IsDefined(failureKind.Value)) ||
             (contentFingerprint.Length != 64 || !contentFingerprint.All(Uri.IsHexDigit)))
             throw new ArgumentException("The persisted Gmail draft export is invalid.");
 
@@ -128,11 +135,11 @@ public sealed class GmailDraftExport
         var hasLease = claimedAt is not null && leaseExpiresAt is not null;
         var stateIsValid = status switch
         {
-            GmailDraftExportStatus.Pending => !hasLease && gmailDraftId is null && completedAt is null,
-            GmailDraftExportStatus.InProgress => hasAttempt && hasLease && gmailDraftId is null && completedAt is null,
-            GmailDraftExportStatus.Succeeded => hasAttempt && !hasLease && completedAt is not null && !string.IsNullOrWhiteSpace(gmailDraftId) && failureKind is null,
-            GmailDraftExportStatus.Failed or GmailDraftExportStatus.NeedsReconciliation => hasAttempt && !hasLease && completedAt is not null && failureKind is not null && gmailDraftId is null,
-            GmailDraftExportStatus.Cancelled => !hasLease && completedAt is not null && gmailDraftId is null,
+            GmailDraftExportStatus.Pending => !hasLease && externalDraftId is null && completedAt is null,
+            GmailDraftExportStatus.InProgress => hasAttempt && hasLease && externalDraftId is null && completedAt is null,
+            GmailDraftExportStatus.Succeeded => hasAttempt && !hasLease && completedAt is not null && !string.IsNullOrWhiteSpace(externalDraftId) && failureKind is null,
+            GmailDraftExportStatus.Failed or GmailDraftExportStatus.NeedsReconciliation => hasAttempt && !hasLease && completedAt is not null && failureKind is not null && externalDraftId is null,
+            GmailDraftExportStatus.Cancelled => !hasLease && completedAt is not null && externalDraftId is null,
             _ => false,
         };
         if (!stateIsValid)
@@ -150,6 +157,7 @@ public sealed class GmailDraftExport
             Subject = subject,
             Body = body,
             ContentFingerprint = expectedFingerprint,
+            Provider = provider,
             RequestedBy = requestedBy,
             CreatedAt = createdAt.ToUniversalTime(),
             UpdatedAt = updatedAt.ToUniversalTime(),
@@ -159,7 +167,7 @@ public sealed class GmailDraftExport
             AttemptId = attemptId,
             ClaimedAt = claimedAt?.ToUniversalTime(),
             LeaseExpiresAt = leaseExpiresAt?.ToUniversalTime(),
-            GmailDraftId = gmailDraftId,
+            ExternalDraftId = externalDraftId,
             FailureKind = failureKind,
         };
     }
@@ -178,7 +186,7 @@ public sealed class GmailDraftExport
         ClaimedAt = timestamp;
         LeaseExpiresAt = timestamp.Add(leaseDuration);
         CompletedAt = null;
-        GmailDraftId = null;
+        ExternalDraftId = null;
         FailureKind = null;
         UpdatedAt = timestamp;
     }
@@ -186,7 +194,7 @@ public sealed class GmailDraftExport
     public GmailDraftExportTransition Complete(Guid attemptId, string gmailDraftId, DateTimeOffset now)
     {
         if (Status == GmailDraftExportStatus.Succeeded && AttemptId == attemptId &&
-            string.Equals(GmailDraftId, gmailDraftId, StringComparison.Ordinal))
+            string.Equals(ExternalDraftId, gmailDraftId, StringComparison.Ordinal))
             return GmailDraftExportTransition.Duplicate;
         if (Status != GmailDraftExportStatus.InProgress || AttemptId != attemptId)
             return GmailDraftExportTransition.Stale;
@@ -201,7 +209,7 @@ public sealed class GmailDraftExport
         }
 
         Status = GmailDraftExportStatus.Succeeded;
-        GmailDraftId = gmailDraftId;
+        ExternalDraftId = gmailDraftId;
         CompletedAt = timestamp;
         ClaimedAt = null;
         LeaseExpiresAt = null;
@@ -254,7 +262,7 @@ public sealed class GmailDraftExport
             throw new ArgumentException("The Gmail draft identifier is invalid.", nameof(gmailDraftId));
 
         Status = GmailDraftExportStatus.Succeeded;
-        GmailDraftId = gmailDraftId;
+        ExternalDraftId = gmailDraftId;
         FailureKind = null;
         CompletedAt = now.ToUniversalTime();
         UpdatedAt = now.ToUniversalTime();
@@ -272,7 +280,7 @@ public sealed class GmailDraftExport
         CompletedAt = null;
         ClaimedAt = null;
         LeaseExpiresAt = null;
-        GmailDraftId = null;
+        ExternalDraftId = null;
         UpdatedAt = now.ToUniversalTime();
     }
 
@@ -292,7 +300,7 @@ public sealed class GmailDraftExport
         CompletedAt = timestamp;
         ClaimedAt = null;
         LeaseExpiresAt = null;
-        GmailDraftId = null;
+        ExternalDraftId = null;
         UpdatedAt = timestamp;
     }
 

@@ -6,6 +6,8 @@ public sealed record InboundMessageRequestV1
     public string? MailboxId { get; init; }
     public string? ExternalMessageId { get; init; }
     public string? ExternalThreadId { get; init; }
+    public string? ExternalInternetMessageId { get; init; }
+    public IReadOnlyList<string>? ExternalRecipientEmails { get; init; }
     public string? SenderEmail { get; init; }
     public string? SenderName { get; init; }
     public string? Subject { get; init; }

@@ -13,6 +13,12 @@ public sealed class ReceiveInboundMessageCommandValidator : AbstractValidator<Re
         RuleFor(command => command.MailboxId).NotEmpty().MaximumLength(InboundMessageLimits.MailboxId);
         RuleFor(command => command.ExternalMessageId).NotEmpty().MaximumLength(InboundMessageLimits.ExternalId);
         RuleFor(command => command.ExternalThreadId).MaximumLength(InboundMessageLimits.ExternalId);
+        RuleFor(command => command.ExternalInternetMessageId)
+            .MaximumLength(InboundMessageLimits.ExternalId)
+            .Must(value => value is null || (!value.Contains('\r') && !value.Contains('\n')))
+            .WithMessage("The RFC internet message ID cannot contain line breaks.");
+        RuleFor(command => command.ExternalRecipientEmails).Must(recipients => recipients is null || recipients.Count <= 100);
+        RuleForEach(command => command.ExternalRecipientEmails).NotEmpty().MaximumLength(InboundMessageLimits.SenderEmail).EmailAddress();
         RuleFor(command => command.SenderEmail)
             .MaximumLength(InboundMessageLimits.SenderEmail)
             .EmailAddress()

@@ -1,0 +1,7 @@
+[
+  { "statusCode": 401, "error": "invalid-token" },
+  { "statusCode": 403, "error": "insufficient-permission" },
+  { "statusCode": 429, "retryAfterSeconds": 30, "error": "throttled" },
+  { "statusCode": 500, "error": "temporary-service-failure" },
+  { "statusCode": 504, "error": "network-timeout" }
+]

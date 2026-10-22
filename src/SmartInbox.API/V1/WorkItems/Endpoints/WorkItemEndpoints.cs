@@ -3,6 +3,7 @@ using Microsoft.Extensions.Options;
 using Microsoft.AspNetCore.Mvc;
 using MediatR;
 using SmartInbox.API.Authentication;
+using SmartInbox.Domain.WorkItems;
 using SmartInbox.API.V1.Gmail.Contracts;
 using SmartInbox.API.V1.WorkItems.Contracts;
 using SmartInbox.Application.WorkItems.Commands;
@@ -107,6 +108,7 @@ public static class WorkItemEndpoints
         Guid id,
         ISender sender,
         IOptions<GmailIntegrationOptions> options,
+        IOptions<OutlookIntegrationOptions> outlookOptions,
         CancellationToken cancellationToken)
     {
         var exports = await sender.Send(new ListGmailDraftExportsQuery(id), cancellationToken);
@@ -115,7 +117,9 @@ public static class WorkItemEndpoints
             : Results.Ok(new GmailDraftExportListResponseV1(
                 options.Value.Enabled,
                 options.Value.Enabled ? options.Value.MailboxId : null,
-                exports.Select(ToGmailDraftExportResponse).ToArray()));
+                exports.Select(ToGmailDraftExportResponse).ToArray(),
+                outlookOptions.Value.DraftExportConfigured,
+                outlookOptions.Value.DraftExportConfigured ? outlookOptions.Value.MailboxId : null));
     }
 
     private static async Task<IResult> CreateDraftExportAsync(
@@ -124,16 +128,17 @@ public static class WorkItemEndpoints
         HttpContext context,
         ISender sender,
         IOptions<GmailIntegrationOptions> options,
+        IOptions<OutlookIntegrationOptions> outlookOptions,
         CancellationToken cancellationToken)
     {
-        var configured = options.Value;
-        if (!configured.Enabled)
-            return GmailExportDisabled();
-        if (!string.Equals(request.DestinationMailboxId, configured.MailboxId, StringComparison.Ordinal))
+        var (enabled, mailboxId) = GetDestination(request.Provider, options.Value, outlookOptions.Value);
+        if (!enabled)
+            return DraftExportDisabled(request.Provider);
+        if (!string.Equals(request.DestinationMailboxId, mailboxId, StringComparison.Ordinal))
             return Results.Conflict(new ProblemDetails
             {
-                Type = "https://smartinbox.local/problems/gmail-export-mailbox-mismatch",
-                Title = "The confirmed destination does not match the configured Gmail mailbox",
+                Type = $"https://smartinbox.local/problems/{request.Provider.ToString().ToLowerInvariant()}-export-mailbox-mismatch",
+                Title = $"The confirmed destination does not match the configured {request.Provider} mailbox",
                 Status = StatusCodes.Status409Conflict,
             });
 
@@ -141,9 +146,10 @@ public static class WorkItemEndpoints
             id,
             request.ExpectedVersion,
             request.Revision,
-            configured.MailboxId,
+            mailboxId!,
             request.RecipientEmail,
-            ReviewerId(context)), cancellationToken);
+            ReviewerId(context),
+            request.Provider), cancellationToken);
         var response = ToGmailDraftExportResponse(result.Export);
         return result.Created
             ? Results.Created($"/api/v1/work-items/{id:D}/draft-exports", response)
@@ -157,17 +163,20 @@ public static class WorkItemEndpoints
         HttpContext context,
         ISender sender,
         IOptions<GmailIntegrationOptions> options,
+        IOptions<OutlookIntegrationOptions> outlookOptions,
         CancellationToken cancellationToken)
     {
-        if (!options.Value.Enabled)
-            return GmailExportDisabled();
+        var (enabled, mailboxId) = GetDestination(request.Provider, options.Value, outlookOptions.Value);
+        if (!enabled)
+            return DraftExportDisabled(request.Provider);
         var export = await sender.Send(new RetryGmailDraftExportCommand(
             id,
             exportId,
             request.ExpectedVersion,
-            options.Value.MailboxId,
+            mailboxId!,
             request.ConfirmedNoDraftExists,
-            ReviewerId(context)), cancellationToken);
+            ReviewerId(context),
+            request.Provider), cancellationToken);
         return Results.Ok(ToGmailDraftExportResponse(export));
     }
 
@@ -178,23 +187,36 @@ public static class WorkItemEndpoints
         HttpContext context,
         ISender sender,
         IOptions<GmailIntegrationOptions> options,
+        IOptions<OutlookIntegrationOptions> outlookOptions,
         CancellationToken cancellationToken)
     {
-        if (!options.Value.Enabled)
-            return GmailExportDisabled();
+        var (enabled, mailboxId) = GetDestination(request.Provider, options.Value, outlookOptions.Value);
+        if (!enabled)
+            return DraftExportDisabled(request.Provider);
         var export = await sender.Send(new ReconcileGmailDraftExportCommand(
             id,
             exportId,
             request.ExpectedVersion,
-            options.Value.MailboxId,
-            request.GmailDraftId,
-            ReviewerId(context)), cancellationToken);
+            mailboxId!,
+            request.ExternalDraftId ?? request.GmailDraftId ?? string.Empty,
+            ReviewerId(context),
+            request.Provider), cancellationToken);
         return Results.Ok(ToGmailDraftExportResponse(export));
     }
 
-    private static IResult GmailExportDisabled() => Results.Problem(
-        type: "https://smartinbox.local/problems/gmail-export-disabled",
-        title: "Gmail draft export is disabled",
+    private static (bool Enabled, string? MailboxId) GetDestination(
+        DraftExportProvider provider,
+        GmailIntegrationOptions gmail,
+        OutlookIntegrationOptions outlook) => provider switch
+    {
+        DraftExportProvider.Gmail => (gmail.Enabled, gmail.Enabled ? gmail.MailboxId : null),
+        DraftExportProvider.Outlook => (outlook.DraftExportConfigured, outlook.DraftExportConfigured ? outlook.MailboxId : null),
+        _ => (false, null),
+    };
+
+    private static IResult DraftExportDisabled(DraftExportProvider provider) => Results.Problem(
+        type: $"https://smartinbox.local/problems/{provider.ToString().ToLowerInvariant()}-export-disabled",
+        title: $"{provider} draft export is disabled",
         statusCode: StatusCodes.Status409Conflict);
 
     private static GmailDraftExportResponseV1 ToGmailDraftExportResponse(SmartInbox.Domain.WorkItems.GmailDraftExport export) => new(
@@ -210,7 +232,9 @@ public static class WorkItemEndpoints
         export.Status.ToString(),
         export.AttemptCount,
         export.GmailDraftId,
-        export.FailureKind?.ToString());
+        export.FailureKind?.ToString(),
+        export.Provider,
+        export.ExternalDraftId);
 
     private static async Task<IResult> StartReviewAsync(
         Guid id,

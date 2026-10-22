@@ -12,21 +12,27 @@ public sealed record CreateGmailDraftExportCommand(
     int Revision,
     string DestinationMailboxId,
     string RecipientEmail,
-    string ReviewerId) : IRequest<GmailDraftExportRequestResult>;
+    string ReviewerId,
+    DraftExportProvider Provider = DraftExportProvider.Gmail) : IRequest<GmailDraftExportRequestResult>;
 
 public sealed record ListGmailDraftExportsQuery(Guid WorkItemId) : IRequest<IReadOnlyList<GmailDraftExport>?>;
 
-public sealed record ClaimGmailDraftExportCommand(string DestinationMailboxId, TimeSpan LeaseDuration) : IRequest<GmailDraftExport?>;
+public sealed record ClaimGmailDraftExportCommand(
+    string DestinationMailboxId,
+    TimeSpan LeaseDuration,
+    DraftExportProvider Provider = DraftExportProvider.Gmail) : IRequest<GmailDraftExport?>;
 
 public sealed record CompleteGmailDraftExportCommand(
     Guid ExportId,
     Guid AttemptId,
-    string GmailDraftId) : IRequest<GmailDraftExportTransition>;
+    string GmailDraftId,
+    DraftExportProvider Provider = DraftExportProvider.Gmail) : IRequest<GmailDraftExportTransition>;
 
 public sealed record FailGmailDraftExportCommand(
     Guid ExportId,
     Guid AttemptId,
-    GmailDraftExportFailureKind FailureKind) : IRequest<GmailDraftExportTransition>;
+    GmailDraftExportFailureKind FailureKind,
+    DraftExportProvider Provider = DraftExportProvider.Gmail) : IRequest<GmailDraftExportTransition>;
 
 public sealed record RetryGmailDraftExportCommand(
     Guid WorkItemId,
@@ -34,7 +40,8 @@ public sealed record RetryGmailDraftExportCommand(
     int ExpectedVersion,
     string DestinationMailboxId,
     bool ConfirmedNoDraftExists,
-    string ReviewerId) : IRequest<GmailDraftExport>;
+    string ReviewerId,
+    DraftExportProvider Provider = DraftExportProvider.Gmail) : IRequest<GmailDraftExport>;
 
 public sealed record ReconcileGmailDraftExportCommand(
     Guid WorkItemId,
@@ -42,7 +49,8 @@ public sealed record ReconcileGmailDraftExportCommand(
     int ExpectedVersion,
     string DestinationMailboxId,
     string GmailDraftId,
-    string ReviewerId) : IRequest<GmailDraftExport>;
+    string ReviewerId,
+    DraftExportProvider Provider = DraftExportProvider.Gmail) : IRequest<GmailDraftExport>;
 
 public sealed record GmailDraftExportRequestResult(GmailDraftExport Export, bool Created);
 
@@ -56,6 +64,7 @@ public sealed class CreateGmailDraftExportCommandValidator : AbstractValidator<C
         RuleFor(command => command.DestinationMailboxId).NotEmpty().MaximumLength(256);
         RuleFor(command => command.RecipientEmail).NotEmpty().MaximumLength(320).EmailAddress();
         RuleFor(command => command.ReviewerId).NotEmpty().MaximumLength(128);
+        RuleFor(command => command.Provider).IsInEnum();
     }
 }
 
@@ -66,8 +75,11 @@ public sealed class ListGmailDraftExportsQueryValidator : AbstractValidator<List
 
 public sealed class ClaimGmailDraftExportCommandValidator : AbstractValidator<ClaimGmailDraftExportCommand>
 {
-    public ClaimGmailDraftExportCommandValidator() => RuleFor(command => command.LeaseDuration)
-        .Must(duration => duration > TimeSpan.Zero && duration <= TimeSpan.FromHours(1));
+    public ClaimGmailDraftExportCommandValidator()
+    {
+        RuleFor(command => command.LeaseDuration).Must(duration => duration > TimeSpan.Zero && duration <= TimeSpan.FromHours(1));
+        RuleFor(command => command.Provider).IsInEnum();
+    }
 }
 
 public sealed class CompleteGmailDraftExportCommandValidator : AbstractValidator<CompleteGmailDraftExportCommand>
@@ -77,6 +89,7 @@ public sealed class CompleteGmailDraftExportCommandValidator : AbstractValidator
         RuleFor(command => command.ExportId).NotEmpty();
         RuleFor(command => command.AttemptId).NotEmpty();
         RuleFor(command => command.GmailDraftId).NotEmpty().MaximumLength(512);
+        RuleFor(command => command.Provider).IsInEnum();
     }
 }
 
@@ -87,6 +100,7 @@ public sealed class FailGmailDraftExportCommandValidator : AbstractValidator<Fai
         RuleFor(command => command.ExportId).NotEmpty();
         RuleFor(command => command.AttemptId).NotEmpty();
         RuleFor(command => command.FailureKind).IsInEnum();
+        RuleFor(command => command.Provider).IsInEnum();
     }
 }
 
@@ -100,6 +114,7 @@ public sealed class RetryGmailDraftExportCommandValidator : AbstractValidator<Re
         RuleFor(command => command.DestinationMailboxId).NotEmpty().MaximumLength(256);
         RuleFor(command => command.ConfirmedNoDraftExists).Equal(true);
         RuleFor(command => command.ReviewerId).NotEmpty().MaximumLength(128);
+        RuleFor(command => command.Provider).IsInEnum();
     }
 }
 
@@ -113,6 +128,7 @@ public sealed class ReconcileGmailDraftExportCommandValidator : AbstractValidato
         RuleFor(command => command.DestinationMailboxId).NotEmpty().MaximumLength(256);
         RuleFor(command => command.GmailDraftId).NotEmpty().MaximumLength(512);
         RuleFor(command => command.ReviewerId).NotEmpty().MaximumLength(128);
+        RuleFor(command => command.Provider).IsInEnum();
     }
 }
 
@@ -135,7 +151,7 @@ public sealed class GmailDraftExportCommandHandlers(
             throw new WorkItemStateConflictException("Only the current response draft revision can be exported.");
 
         var export = Apply(() => GmailDraftExport.Create(
-            item, command.DestinationMailboxId, command.RecipientEmail, command.ReviewerId, timeProvider.GetUtcNow()));
+            item, command.DestinationMailboxId, command.RecipientEmail, command.ReviewerId, timeProvider.GetUtcNow(), command.Provider));
         var saved = await exports.CreateOrGetAsync(export, item.Version, cancellationToken);
         return new GmailDraftExportRequestResult(saved.Export, saved.Created);
     }
@@ -148,20 +164,20 @@ public sealed class GmailDraftExportCommandHandlers(
     }
 
     public Task<GmailDraftExport?> Handle(ClaimGmailDraftExportCommand command, CancellationToken cancellationToken) =>
-        exports.ClaimPendingAsync(command.DestinationMailboxId, command.LeaseDuration, timeProvider.GetUtcNow(), cancellationToken);
+        exports.ClaimPendingAsync(command.Provider, command.DestinationMailboxId, command.LeaseDuration, timeProvider.GetUtcNow(), cancellationToken);
 
     public Task<GmailDraftExportTransition> Handle(CompleteGmailDraftExportCommand command, CancellationToken cancellationToken) =>
-        exports.CompleteAsync(command.ExportId, command.AttemptId, command.GmailDraftId, timeProvider.GetUtcNow(), cancellationToken);
+        exports.CompleteAsync(command.Provider, command.ExportId, command.AttemptId, command.GmailDraftId, timeProvider.GetUtcNow(), cancellationToken);
 
     public Task<GmailDraftExportTransition> Handle(FailGmailDraftExportCommand command, CancellationToken cancellationToken) =>
-        exports.FailAsync(command.ExportId, command.AttemptId, command.FailureKind, timeProvider.GetUtcNow(), cancellationToken);
+        exports.FailAsync(command.Provider, command.ExportId, command.AttemptId, command.FailureKind, timeProvider.GetUtcNow(), cancellationToken);
 
     public async Task<GmailDraftExport> Handle(RetryGmailDraftExportCommand command, CancellationToken cancellationToken)
     {
         var item = await GetExpectedAsync(command.WorkItemId, command.ExpectedVersion, cancellationToken);
         Apply(() => item.EnsureEditableBy(command.ReviewerId));
         return await exports.RetryAfterManualCheckAsync(
-            command.WorkItemId, command.ExportId, command.ExpectedVersion, command.DestinationMailboxId, command.ReviewerId,
+            command.WorkItemId, command.ExportId, command.ExpectedVersion, command.DestinationMailboxId, command.ReviewerId, command.Provider,
             timeProvider.GetUtcNow(), cancellationToken) ?? throw new WorkItemNotFoundException();
     }
 
@@ -171,7 +187,7 @@ public sealed class GmailDraftExportCommandHandlers(
         Apply(() => item.EnsureEditableBy(command.ReviewerId));
         return await exports.ReconcileAsync(
             command.WorkItemId, command.ExportId, command.ExpectedVersion, command.DestinationMailboxId, command.ReviewerId,
-            command.GmailDraftId, timeProvider.GetUtcNow(), cancellationToken) ?? throw new WorkItemNotFoundException();
+            command.GmailDraftId, command.Provider, timeProvider.GetUtcNow(), cancellationToken) ?? throw new WorkItemNotFoundException();
     }
 
     private async Task<SmartInbox.Domain.WorkItems.WorkItem> GetExpectedAsync(

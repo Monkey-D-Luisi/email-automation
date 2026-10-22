@@ -10,13 +10,28 @@ public interface IGmailDraftExportRepository
         int expectedWorkItemVersion,
         CancellationToken cancellationToken = default);
     Task<GmailDraftExport?> ClaimPendingAsync(string destinationMailboxId, TimeSpan leaseDuration, DateTimeOffset now, CancellationToken cancellationToken = default);
+    Task<GmailDraftExport?> ClaimPendingAsync(DraftExportProvider provider, string destinationMailboxId, TimeSpan leaseDuration, DateTimeOffset now, CancellationToken cancellationToken = default);
     Task<GmailDraftExportTransition> CompleteAsync(
         Guid exportId,
         Guid attemptId,
         string gmailDraftId,
         DateTimeOffset now,
         CancellationToken cancellationToken = default);
+    Task<GmailDraftExportTransition> CompleteAsync(
+        DraftExportProvider provider,
+        Guid exportId,
+        Guid attemptId,
+        string externalDraftId,
+        DateTimeOffset now,
+        CancellationToken cancellationToken = default);
     Task<GmailDraftExportTransition> FailAsync(
+        Guid exportId,
+        Guid attemptId,
+        GmailDraftExportFailureKind failureKind,
+        DateTimeOffset now,
+        CancellationToken cancellationToken = default);
+    Task<GmailDraftExportTransition> FailAsync(
+        DraftExportProvider provider,
         Guid exportId,
         Guid attemptId,
         GmailDraftExportFailureKind failureKind,
@@ -30,6 +45,15 @@ public interface IGmailDraftExportRepository
         string reviewerId,
         DateTimeOffset now,
         CancellationToken cancellationToken = default);
+    Task<GmailDraftExport?> RetryAfterManualCheckAsync(
+        Guid workItemId,
+        Guid exportId,
+        int expectedWorkItemVersion,
+        string destinationMailboxId,
+        string reviewerId,
+        DraftExportProvider provider,
+        DateTimeOffset now,
+        CancellationToken cancellationToken = default);
     Task<GmailDraftExport?> ReconcileAsync(
         Guid workItemId,
         Guid exportId,
@@ -37,6 +61,16 @@ public interface IGmailDraftExportRepository
         string destinationMailboxId,
         string reviewerId,
         string gmailDraftId,
+        DateTimeOffset now,
+        CancellationToken cancellationToken = default);
+    Task<GmailDraftExport?> ReconcileAsync(
+        Guid workItemId,
+        Guid exportId,
+        int expectedWorkItemVersion,
+        string destinationMailboxId,
+        string reviewerId,
+        string externalDraftId,
+        DraftExportProvider provider,
         DateTimeOffset now,
         CancellationToken cancellationToken = default);
 }

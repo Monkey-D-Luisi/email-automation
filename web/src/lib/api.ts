@@ -20,7 +20,11 @@ export type ReviewerSession = {
   aiDraftingEnabled: boolean;
   gmailDraftExportEnabled: boolean;
   gmailDraftExportMailboxId: string | null;
+  outlookDraftExportEnabled: boolean;
+  outlookDraftExportMailboxId: string | null;
 };
+
+export type DraftExportProvider = "Gmail" | "Outlook";
 
 export type GmailDraftExport = {
   id: string;
@@ -34,6 +38,8 @@ export type GmailDraftExport = {
   completedAt: string | null;
   status: "Pending" | "InProgress" | "Succeeded" | "Failed" | "NeedsReconciliation" | "Cancelled";
   attemptCount: number;
+  provider: DraftExportProvider;
+  externalDraftId: string | null;
   gmailDraftId: string | null;
   failureKind: "ProviderNotStarted" | "ProviderOutcomeUnknown" | null;
 };
@@ -42,6 +48,8 @@ export type GmailDraftExportList = {
   enabled: boolean;
   destinationMailboxId: string | null;
   exports: GmailDraftExport[];
+  outlookEnabled: boolean;
+  outlookDestinationMailboxId: string | null;
 };
 
 export type WorkItemListItem = {
@@ -238,6 +246,7 @@ export const createGmailDraftExport = (id: string, request: {
   revision: number;
   destinationMailboxId: string;
   recipientEmail: string;
+  provider: DraftExportProvider;
 }) => apiRequest<GmailDraftExport>(`/api/v1/work-items/${id}/draft-exports`, {
   method: "POST",
   headers: { "Content-Type": "application/json" },
@@ -247,6 +256,7 @@ export const createGmailDraftExport = (id: string, request: {
 export const retryGmailDraftExport = (workItemId: string, exportId: string, request: {
   expectedVersion: number;
   confirmedNoDraftExists: boolean;
+  provider: DraftExportProvider;
 }) => apiRequest<GmailDraftExport>(`/api/v1/work-items/${workItemId}/draft-exports/${exportId}/retry`, {
   method: "POST",
   headers: { "Content-Type": "application/json" },
@@ -255,7 +265,8 @@ export const retryGmailDraftExport = (workItemId: string, exportId: string, requ
 
 export const reconcileGmailDraftExport = (workItemId: string, exportId: string, request: {
   expectedVersion: number;
-  gmailDraftId: string;
+  provider: DraftExportProvider;
+  externalDraftId: string;
 }) => apiRequest<GmailDraftExport>(`/api/v1/work-items/${workItemId}/draft-exports/${exportId}/reconcile`, {
   method: "POST",
   headers: { "Content-Type": "application/json" },

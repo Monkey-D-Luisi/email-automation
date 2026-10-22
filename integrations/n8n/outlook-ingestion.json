@@ -1,0 +1,1241 @@
+{
+  "name": "Smart Inbox Outlook Graph Ingestion",
+  "nodes": [
+    {
+      "id": "poll-outlook-test-folder",
+      "name": "Poll Outlook Test Folder",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        240,
+        160
+      ],
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes",
+              "minutesInterval": 1
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "manual-synthetic-outlook-event",
+      "name": "Manual Synthetic Outlook Event",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        240,
+        380
+      ],
+      "parameters": {}
+    },
+    {
+      "id": "synthetic-outlook-graph-fixtures",
+      "name": "Synthetic Outlook Graph Fixtures",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        470,
+        380
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const base = {\n  internetMessageId: \"<synthetic-outlook-001@example.test>\",\n  conversationId: \"synthetic-outlook-conversation-001\",\n  receivedDateTime: \"2026-10-22T08:15:00.000Z\",\n  subject: \"Synthetic Outlook request\",\n  from: { emailAddress: { name: \"Synthetic Sender\", address: \"alex@example.test\" } },\n  toRecipients: [{ emailAddress: { name: \"Test Inbox\", address: \"inbox@example.test\" } }],\n  body: { contentType: \"text\", content: \"Please review synthetic invoice INV-2030.\" },\n  attachments: [{ id: \"synthetic-attachment-001\", name: \"invoice.pdf\", contentType: \"application/pdf\", size: 1234 }]\n};\nreturn [\n  { ...base, id: \"AAMkAGI2-synthetic-outlook-001\" },\n  { ...base, internetMessageId: \"<synthetic-outlook-002@example.test>\", id: \"AAMkAGI2-synthetic-outlook-002\", subject: \"Second message in the same conversation\" },\n  { ...base, id: \"AAMkAGI2-synthetic-outlook-001\" }\n].map((json, index) => ({ json, pairedItem: { item: index } }));"
+      }
+    },
+    {
+      "id": "require-outlook-test-scope",
+      "name": "Require Outlook Test Scope",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        470,
+        160
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// shortcut: the fixed cutoff replays scoped-folder history on each poll, use a durable delta checkpoint when the test folder grows beyond a small test set.\nconst mode = $env.SMARTINBOX_OUTLOOK_MODE || \"disabled\";\nif (mode === \"disabled\") return [];\nif (mode !== \"live\") throw new Error(\"Set SMARTINBOX_OUTLOOK_MODE to disabled or live.\");\nconst folderId = ($env.SMARTINBOX_OUTLOOK_TEST_FOLDER_ID || \"\").trim();\nconst reservedFolders = new Set([\"inbox\", \"sentitems\", \"drafts\", \"deleteditems\", \"junkemail\", \"outbox\", \"archive\"]);\nif (!folderId || reservedFolders.has(folderId.toLowerCase())) throw new Error(\"Configure a dedicated Outlook test folder ID.\");\nconst cutoff = new Date($env.SMARTINBOX_OUTLOOK_RECEIVED_AFTER || \"\");\nif (Number.isNaN(cutoff.getTime())) throw new Error(\"Configure a valid Outlook received-after cutoff.\");\nif (!($env.SMARTINBOX_OUTLOOK_MAILBOX_ID || \"\").trim()) throw new Error(\"Configure the authorized Outlook mailbox identity.\");\nreturn [{ json: { attempt: 1 } }];"
+      }
+    },
+    {
+      "id": "verify-outlook-mailbox",
+      "name": "Verify Outlook Mailbox",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        700,
+        160
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "https://graph.microsoft.com/v1.0/me?$select=mail,userPrincipalName",
+        "sendHeaders": false,
+        "sendBody": false,
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "json",
+              "fullResponse": true,
+              "neverError": true
+            }
+          }
+        },
+        "authentication": "genericCredentialType",
+        "genericAuthType": "oAuth2Api"
+      },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "id": "confirm-outlook-mailbox",
+      "name": "Confirm Outlook Mailbox",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        930,
+        160
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const response = $input.first().json;\nconst body = response.body ?? response;\nconst expected = String($env.SMARTINBOX_OUTLOOK_MAILBOX_ID || \"\").trim().toLowerCase();\nconst actual = String(body.mail || body.userPrincipalName || \"\").trim().toLowerCase();\nreturn [{ json: { identityVerified: Number(response.statusCode ?? 200) === 200 && !!expected && actual === expected, reason: actual === expected ? null : \"mailbox-identity-mismatch\" } }];"
+      }
+    },
+    {
+      "id": "outlook-mailbox-matches",
+      "name": "Outlook Mailbox Matches?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1150,
+        160
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "outlook-mailbox-matches-condition",
+              "leftValue": "={{$json.identityVerified === true}}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      }
+    },
+    {
+      "id": "build-outlook-graph-poll-request",
+      "name": "Build Outlook Graph Poll Request",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1370,
+        70
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "return [{ json: { attempt: 1 } }];"
+      }
+    },
+    {
+      "id": "list-outlook-test-folder-messages",
+      "name": "List Outlook Test Folder Messages",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1600,
+        70
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "={{'https://graph.microsoft.com/v1.0/me/mailFolders/' + encodeURIComponent($env.SMARTINBOX_OUTLOOK_TEST_FOLDER_ID) + '/messages?$filter=' + encodeURIComponent('receivedDateTime ge ' + new Date($env.SMARTINBOX_OUTLOOK_RECEIVED_AFTER).toISOString()) + '&$select=' + encodeURIComponent('id,internetMessageId,conversationId,from,sender,toRecipients,ccRecipients,bccRecipients,subject,body,receivedDateTime,hasAttachments') + '&$expand=' + encodeURIComponent('attachments($select=id,name,contentType,size,isInline)') + '&$top=50'}}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Prefer",
+              "value": "IdType=\"ImmutableId\", outlook.body-content-type=\"text\""
+            }
+          ]
+        },
+        "sendBody": false,
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "json",
+              "fullResponse": true,
+              "neverError": true
+            }
+          },
+          "pagination": {
+            "pagination": {
+              "paginationMode": "responseContainsNextURL",
+              "nextURL": "={{$response.body[\"@odata.nextLink\"]}}",
+              "paginationCompleteWhen": "other",
+              "completeExpression": "={{!$response.body[\"@odata.nextLink\"]}}"
+            }
+          }
+        },
+        "authentication": "genericCredentialType",
+        "genericAuthType": "oAuth2Api"
+      },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "id": "classify-outlook-graph-poll-response",
+      "name": "Classify Outlook Graph Poll Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1840,
+        70
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "function retryAfterSeconds(headers) {\n  const raw = headers?.['retry-after'] ?? headers?.['Retry-After'] ?? headers?.['RETRY-AFTER'];\n  if (raw == null) return null;\n  const seconds = Number(raw);\n  if (Number.isFinite(seconds) && seconds >= 0) return Math.min(seconds, 60);\n  const date = Date.parse(String(raw));\n  return Number.isNaN(date) ? null : Math.min(Math.max(0, Math.ceil((date - Date.now()) / 1000)), 60);\n}\nconst attempt = $(\"Build Outlook Graph Poll Request\").first().json.attempt;\nconst responses = $input.all().map(item => item.json ?? {});\nconst failed = responses.find(response => Number(response.statusCode ?? 200) !== 200);\nif (failed) {\n  const statusCode = Number(failed.statusCode ?? 0);\n  const retry = (statusCode === 429 || statusCode >= 500 || statusCode === 0) && attempt < 3;\n  return [{ json: { graphError: true, statusCode: statusCode || null, retryAfterSeconds: retryAfterSeconds(failed.headers), attempt, retry } }];\n}\nconst messages = responses.flatMap(response => {\n  const body = response.body ?? response;\n  if (Array.isArray(body)) return body;\n  if (Array.isArray(body.value)) return body.value;\n  return [];\n});\nreturn messages.map((message, index) => ({ json: message, pairedItem: { item: index } }));"
+      }
+    },
+    {
+      "id": "classify-outlook-graph-poll-network-error",
+      "name": "Classify Outlook Graph Poll Network Error",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1840,
+        250
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const request = $(\"Build Outlook Graph Poll Request\").item.json;\nreturn { json: { graphError: true, statusCode: null, retryAfterSeconds: null, attempt: request.attempt, retry: request.attempt < 3 } };"
+      }
+    },
+    {
+      "id": "retry-outlook-graph-poll",
+      "name": "Retry Outlook Graph Poll?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        2070,
+        110
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "retry-outlook-graph-poll-condition",
+              "leftValue": "={{$json.graphError === true && $json.retry === true}}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      }
+    },
+    {
+      "id": "wait-before-outlook-graph-retry",
+      "name": "Wait Before Outlook Graph Retry",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [
+        2290,
+        70
+      ],
+      "parameters": {
+        "amount": "={{Math.min(60, Math.max(1, $json.retryAfterSeconds ?? Math.pow(2, $json.attempt - 1)))}}",
+        "unit": "seconds"
+      }
+    },
+    {
+      "id": "prepare-outlook-graph-retry",
+      "name": "Prepare Outlook Graph Retry",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2510,
+        70
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const item = $input.first().json; return [{ json: { attempt: item.attempt + 1 } }];"
+      }
+    },
+    {
+      "id": "retry-outlook-test-folder-messages",
+      "name": "Retry Outlook Test Folder Messages",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2740,
+        70
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "={{'https://graph.microsoft.com/v1.0/me/mailFolders/' + encodeURIComponent($env.SMARTINBOX_OUTLOOK_TEST_FOLDER_ID) + '/messages?$filter=' + encodeURIComponent('receivedDateTime ge ' + new Date($env.SMARTINBOX_OUTLOOK_RECEIVED_AFTER).toISOString()) + '&$select=' + encodeURIComponent('id,internetMessageId,conversationId,from,sender,toRecipients,ccRecipients,bccRecipients,subject,body,receivedDateTime,hasAttachments') + '&$expand=' + encodeURIComponent('attachments($select=id,name,contentType,size,isInline)') + '&$top=50'}}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Prefer",
+              "value": "IdType=\"ImmutableId\", outlook.body-content-type=\"text\""
+            }
+          ]
+        },
+        "sendBody": false,
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "json",
+              "fullResponse": true,
+              "neverError": true
+            }
+          },
+          "pagination": {
+            "pagination": {
+              "paginationMode": "responseContainsNextURL",
+              "nextURL": "={{$response.body[\"@odata.nextLink\"]}}",
+              "paginationCompleteWhen": "other",
+              "completeExpression": "={{!$response.body[\"@odata.nextLink\"]}}"
+            }
+          }
+        },
+        "authentication": "genericCredentialType",
+        "genericAuthType": "oAuth2Api"
+      },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "id": "classify-outlook-graph-retry-response",
+      "name": "Classify Outlook Graph Retry Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2970,
+        70
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "function retryAfterSeconds(headers) {\n  const raw = headers?.['retry-after'] ?? headers?.['Retry-After'] ?? headers?.['RETRY-AFTER'];\n  if (raw == null) return null;\n  const seconds = Number(raw);\n  if (Number.isFinite(seconds) && seconds >= 0) return Math.min(seconds, 60);\n  const date = Date.parse(String(raw));\n  return Number.isNaN(date) ? null : Math.min(Math.max(0, Math.ceil((date - Date.now()) / 1000)), 60);\n}\nconst attempt = $(\"Prepare Outlook Graph Retry\").first().json.attempt;\nconst responses = $input.all().map(item => item.json ?? {});\nconst failed = responses.find(response => Number(response.statusCode ?? 200) !== 200);\nif (failed) {\n  const statusCode = Number(failed.statusCode ?? 0);\n  const retry = (statusCode === 429 || statusCode >= 500 || statusCode === 0) && attempt < 3;\n  return [{ json: { graphError: true, statusCode: statusCode || null, retryAfterSeconds: retryAfterSeconds(failed.headers), attempt, retry } }];\n}\nconst messages = responses.flatMap(response => {\n  const body = response.body ?? response;\n  if (Array.isArray(body)) return body;\n  if (Array.isArray(body.value)) return body.value;\n  return [];\n});\nreturn messages.map((message, index) => ({ json: message, pairedItem: { item: index } }));"
+      }
+    },
+    {
+      "id": "classify-outlook-graph-retry-network-error",
+      "name": "Classify Outlook Graph Retry Network Error",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2970,
+        250
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const request = $(\"Prepare Outlook Graph Retry\").item.json;\nreturn { json: { graphError: true, statusCode: null, retryAfterSeconds: null, attempt: request.attempt, retry: request.attempt < 3 } };"
+      }
+    },
+    {
+      "id": "safe-outlook-graph-poll-diagnostic",
+      "name": "Safe Outlook Graph Poll Diagnostic",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2300,
+        300
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "return $input.all().map(item => ({ json: { outcome: item.json.graphError ? \"graph-poll-failed\", httpStatus: item.json.statusCode ?? null, retryExhausted: item.json.retry === false } }));"
+      }
+    },
+    {
+      "id": "map-and-validate-outlook-message",
+      "name": "Map and Validate Outlook Message",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3210,
+        70
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const incoming = $input.all();\n\nfunction htmlToText(html) {\n  const entities = { amp: \"&\", lt: \"<\", gt: \">\", quot: '\"', apos: \"'\", nbsp: \" \" };\n  return html\n    .replace(/<script\\b[^>]*>[\\s\\S]*?<\\/script\\s*>/gi, \" \")\n    .replace(/<style\\b[^>]*>[\\s\\S]*?<\\/style\\s*>/gi, \" \")\n    .replace(/<!--([\\s\\S]*?)-->/g, \" \")\n    .replace(/<(br|\\/p|\\/div|\\/li|\\/tr|\\/h[1-6])\\b[^>]*>/gi, \"\\n\")\n    .replace(/<[^>]*>/g, \" \")\n    .replace(/&(#(?:x[\\da-f]+|\\d+)|[a-z]+);/gi, (entity, name) => {\n      if (name[0] !== \"#\") return entities[name.toLowerCase()] ?? entity;\n      const codePoint = name[1].toLowerCase() === \"x\"\n        ? Number.parseInt(name.slice(2), 16)\n        : Number.parseInt(name.slice(1), 10);\n      return Number.isInteger(codePoint) && codePoint >= 0 && codePoint <= 0x10ffff\n        ? String.fromCodePoint(codePoint)\n        : \" \";\n    })\n    .replace(/\\r/g, \"\")\n    .replace(/[\\t ]+\\n/g, \"\\n\")\n    .replace(/\\n[\\t ]+/g, \"\\n\")\n    .trim();\n}\n\nfunction stableCorrelationId(messageId) {\n  const hash = seed => {\n    let value = seed;\n    for (let index = 0; index < messageId.length; index++) {\n      value ^= messageId.charCodeAt(index);\n      value = Math.imul(value, 16777619);\n    }\n    return (value >>> 0).toString(16).padStart(8, \"0\");\n  };\n  return `outlook-${hash(2166136261)}${hash(2246822519)}`;\n}\n\nfunction mapMessage(message) {\n  const messageId = typeof message.id === \"string\" ? message.id.trim() : \"\";\n  const invalid = reason => ({ json: { valid: false, reason, providerMessageId: messageId || null } });\n  if (!messageId || messageId.length > 512) return invalid(\"invalid-outlook-message-id\");\n\n  const sender = message.from?.emailAddress ?? message.sender?.emailAddress;\n  const senderEmail = typeof sender?.address === \"string\" && sender.address.trim() ? sender.address.trim() : null;\n  const senderName = typeof sender?.name === \"string\" && sender.name.trim() ? sender.name.trim() : null;\n  if (senderEmail && (!/^[^\\s<>@]+@[^\\s<>@]+\\.[^\\s<>@]+$/.test(senderEmail) || senderEmail.length > 320))\n    return invalid(\"invalid-sender-address\");\n  if (senderName && senderName.length > 256) return invalid(\"sender-name-too-long\");\n\n  const subject = typeof message.subject === \"string\" ? message.subject : \"\";\n  if (subject.length > 998 || /[\\r\\n]/.test(subject)) return invalid(\"invalid-subject\");\n\n  const content = typeof message.body === \"string\" ? message.body : message.body?.content;\n  const contentType = String(message.body?.contentType ?? \"text\").toLowerCase();\n  const bodyText = typeof content !== \"string\" ? \"\" : contentType === \"html\" ? htmlToText(content) : content.trim();\n  if (!bodyText.trim()) return invalid(\"message-body-empty\");\n  if (bodyText.length > 40000) return invalid(\"message-body-too-long\");\n\n  const receivedAt = message.receivedDateTime;\n  const receivedDate = receivedAt instanceof Date ? receivedAt : new Date(receivedAt);\n  if (!receivedAt || Number.isNaN(receivedDate.getTime())) return invalid(\"invalid-received-at\");\n\n  const conversationId = typeof message.conversationId === \"string\" && message.conversationId.length <= 512\n    ? message.conversationId\n    : null;\n  const internetMessageId = typeof message.internetMessageId === \"string\" && message.internetMessageId.length <= 512 &&\n      !/[\\r\\n]/.test(message.internetMessageId)\n    ? message.internetMessageId\n    : null;\n  const recipientEmails = [message.toRecipients, message.ccRecipients, message.bccRecipients]\n    .flatMap(recipients => Array.isArray(recipients) ? recipients : [])\n    .flatMap(recipient => {\n      const address = recipient?.emailAddress?.address;\n      if (typeof address !== \"string\" || !address.trim()) return [];\n      const normalized = address.trim();\n      return /^[^\\s<>@]+@[^\\s<>@]+\\.[^\\s<>@]+$/.test(normalized) && normalized.length <= 320\n        ? [normalized]\n        : [{ invalid: true }];\n    });\n  if (recipientEmails.some(address => typeof address !== \"string\")) return invalid(\"invalid-recipient-address\");\n  if (recipientEmails.length > 100) return invalid(\"too-many-recipients\");\n\n  const rawAttachments = Array.isArray(message.attachments) ? message.attachments : [];\n  if (rawAttachments.length > 10) return invalid(\"too-many-attachments\");\n  const attachments = rawAttachments.flatMap(attachment => {\n    if (!attachment || typeof attachment !== \"object\") return [];\n    const id = attachment.id;\n    const name = attachment.name;\n    const contentType = attachment.contentType;\n    const sizeBytes = attachment.size;\n    if (id == null || name == null || contentType == null || !Number.isSafeInteger(sizeBytes) || sizeBytes < 0)\n      return [];\n    return [{ externalAttachmentId: String(id), name: String(name), contentType: String(contentType), sizeBytes }];\n  });\n\n  const correlationId = stableCorrelationId(messageId);\n  return {\n    json: {\n      valid: true,\n      correlationId,\n      payload: {\n        graphMessageId: messageId,\n        internetMessageId,\n        conversationId,\n        senderEmail,\n        senderName,\n        recipientEmails,\n        subject,\n        bodyText,\n        receivedAt: receivedDate.toISOString(),\n        attachments,\n      },\n    },\n  };\n}\n\nreturn incoming.map((item, index) => ({ ...mapMessage(item.json ?? {}), pairedItem: { item: index } }));"
+      }
+    },
+    {
+      "id": "outlook-message-valid",
+      "name": "Outlook Message Valid?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        3430,
+        70
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "outlook-message-valid-condition",
+              "leftValue": "={{$json.valid === true}}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      }
+    },
+    {
+      "id": "build-outlook-api-request",
+      "name": "Build Outlook API Request",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3650,
+        30
+      ],
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "const item = $input.item.json;\nconst payload = {\n  graphMessageId: item.payload.graphMessageId,\n  internetMessageId: item.payload.internetMessageId,\n  conversationId: item.payload.conversationId,\n  senderEmail: item.payload.senderEmail,\n  senderName: item.payload.senderName,\n  recipientEmails: item.payload.recipientEmails,\n  subject: item.payload.subject,\n  bodyText: item.payload.bodyText,\n  receivedAt: item.payload.receivedAt,\n  attachments: item.payload.attachments,\n};\nconst bytes = new TextEncoder().encode(JSON.stringify(payload)).length;\nif (bytes > 60000) return { json: { valid: false, reason: \"message-request-too-large\", providerMessageId: item.payload.graphMessageId } };\nreturn { json: { payload, correlationId: item.correlationId, providerMessageId: item.payload.graphMessageId, attempt: 1 } };"
+      }
+    },
+    {
+      "id": "outlook-api-request-size-valid",
+      "name": "Outlook API Request Size Valid?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        3870,
+        30
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "outlook-api-request-size-valid-condition",
+              "leftValue": "={{$json.valid !== false}}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      }
+    },
+    {
+      "id": "outlook-api-ingestion",
+      "name": "Outlook API Ingestion",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        4090,
+        30
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "={{$env.SMARTINBOX_API_ORIGIN + '/api/v1/integrations/outlook/messages'}}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-Correlation-ID",
+              "value": "={{$json.correlationId}}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{$json.payload}}",
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "json",
+              "fullResponse": true,
+              "neverError": true
+            }
+          }
+        },
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpBearerAuth"
+      },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "id": "classify-outlook-api-response",
+      "name": "Classify Outlook API Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        4310,
+        30
+      ],
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "const response = $input.item.json;\nconst request = $(\"Build Outlook API Request\").item.json;\nconst status = Number(response.statusCode ?? 0);\nlet outcome = \"unexpected\";\nif (status === 202) outcome = \"accepted\";\nelse if (status === 200) outcome = \"duplicate\";\nelse if (status === 409) outcome = \"conflict\";\nelse if (status === 401 || status === 403) outcome = \"authentication\";\nelse if (status === 400 || status === 413 || status === 422) outcome = \"validation\";\nelse if (status === 429) outcome = \"rate-limited\";\nelse if (status >= 500) outcome = \"temporary-backend\";\nconst retry = (status === 0 || status === 429 || status >= 500) && request.attempt < 3;\nreturn { json: { outcome: retry ? \"retrying\" : (outcome === \"rate-limited\" || outcome === \"temporary-backend\" || status === 0 ? \"retry-exhausted\" : outcome), httpStatus: status || null, attemptCount: request.attempt, correlationId: request.correlationId, providerMessageId: request.providerMessageId, retry, ...(retry ? { payload: request.payload, attempt: request.attempt } : {}) } };"
+      }
+    },
+    {
+      "id": "classify-outlook-api-network-error",
+      "name": "Classify Outlook API Network Error",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        4310,
+        200
+      ],
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "const request = $(\"Build Outlook API Request\").item.json;\nconst retry = request.attempt < 3;\nreturn { json: { outcome: retry ? \"retrying-network-error\" : \"retry-exhausted\", httpStatus: null, attemptCount: request.attempt, correlationId: request.correlationId, providerMessageId: request.providerMessageId, retry, ...(retry ? { payload: request.payload, attempt: request.attempt } : {}) } };"
+      }
+    },
+    {
+      "id": "retry-outlook-api-failure",
+      "name": "Retry Outlook API Failure?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        4530,
+        70
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "retry-outlook-api-failure-condition",
+              "leftValue": "={{$json.retry === true}}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      }
+    },
+    {
+      "id": "wait-before-outlook-api-retry",
+      "name": "Wait Before Outlook API Retry",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [
+        4750,
+        70
+      ],
+      "parameters": {
+        "amount": "={{Math.pow(2, $json.attemptCount - 1)}}",
+        "unit": "seconds"
+      }
+    },
+    {
+      "id": "prepare-outlook-api-retry",
+      "name": "Prepare Outlook API Retry",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        4970,
+        70
+      ],
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "const request = $input.item.json; return { json: { payload: request.payload, correlationId: request.correlationId, providerMessageId: request.providerMessageId, attempt: request.attempt + 1 } };"
+      }
+    },
+    {
+      "id": "retry-outlook-api-ingestion",
+      "name": "Retry Outlook API Ingestion",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        5190,
+        70
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "={{$env.SMARTINBOX_API_ORIGIN + '/api/v1/integrations/outlook/messages'}}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-Correlation-ID",
+              "value": "={{$json.correlationId}}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{$json.payload}}",
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "json",
+              "fullResponse": true,
+              "neverError": true
+            }
+          }
+        },
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpBearerAuth"
+      },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "id": "classify-outlook-api-retry-response",
+      "name": "Classify Outlook API Retry Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        5410,
+        70
+      ],
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "const response = $input.item.json;\nconst request = $(\"Prepare Outlook API Retry\").item.json;\nconst status = Number(response.statusCode ?? 0);\nlet outcome = \"unexpected\";\nif (status === 202) outcome = \"accepted\";\nelse if (status === 200) outcome = \"duplicate\";\nelse if (status === 409) outcome = \"conflict\";\nelse if (status === 401 || status === 403) outcome = \"authentication\";\nelse if (status === 400 || status === 413 || status === 422) outcome = \"validation\";\nelse if (status === 429) outcome = \"rate-limited\";\nelse if (status >= 500) outcome = \"temporary-backend\";\nconst retry = (status === 0 || status === 429 || status >= 500) && request.attempt < 3;\nreturn { json: { outcome: retry ? \"retrying\" : (outcome === \"rate-limited\" || outcome === \"temporary-backend\" || status === 0 ? \"retry-exhausted\" : outcome), httpStatus: status || null, attemptCount: request.attempt, correlationId: request.correlationId, providerMessageId: request.providerMessageId, retry, ...(retry ? { payload: request.payload, attempt: request.attempt } : {}) } };"
+      }
+    },
+    {
+      "id": "classify-outlook-api-retry-network-error",
+      "name": "Classify Outlook API Retry Network Error",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        5410,
+        230
+      ],
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "const request = $(\"Prepare Outlook API Retry\").item.json;\nconst retry = request.attempt < 3;\nreturn { json: { outcome: retry ? \"retrying-network-error\" : \"retry-exhausted\", httpStatus: null, attemptCount: request.attempt, correlationId: request.correlationId, providerMessageId: request.providerMessageId, retry, ...(retry ? { payload: request.payload, attempt: request.attempt } : {}) } };"
+      }
+    },
+    {
+      "id": "retry-outlook-api-failure-again",
+      "name": "Retry Outlook API Failure Again?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        5630,
+        110
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "retry-outlook-api-failure-again-condition",
+              "leftValue": "={{$json.retry === true}}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      }
+    },
+    {
+      "id": "safe-invalid-outlook-message-diagnostic",
+      "name": "Safe Invalid Outlook Message Diagnostic",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3650,
+        300
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "return $input.all().filter(item => item.json.valid !== true).map(item => ({ json: { outcome: \"message-quarantined\", reason: item.json.reason, providerMessageId: item.json.providerMessageId ?? null } }));"
+      }
+    },
+    {
+      "id": "outlook-graph-poll-is-error-",
+      "name": "Outlook Graph Poll Is Error?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        2070,
+        -90
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "outlook-graph-poll-is-error--condition",
+              "leftValue": "={{$json.graphError === true}}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      }
+    },
+    {
+      "id": "outlook-graph-retry-is-error-",
+      "name": "Outlook Graph Retry Is Error?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        3200,
+        -90
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "outlook-graph-retry-is-error--condition",
+              "leftValue": "={{$json.graphError === true}}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Poll Outlook Test Folder": {
+      "main": [
+        [
+          {
+            "node": "Require Outlook Test Scope",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Manual Synthetic Outlook Event": {
+      "main": [
+        [
+          {
+            "node": "Synthetic Outlook Graph Fixtures",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Synthetic Outlook Graph Fixtures": {
+      "main": [
+        [
+          {
+            "node": "Map and Validate Outlook Message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Require Outlook Test Scope": {
+      "main": [
+        [
+          {
+            "node": "Verify Outlook Mailbox",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Verify Outlook Mailbox": {
+      "main": [
+        [
+          {
+            "node": "Confirm Outlook Mailbox",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Safe Outlook Graph Poll Diagnostic",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Confirm Outlook Mailbox": {
+      "main": [
+        [
+          {
+            "node": "Outlook Mailbox Matches?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Outlook Mailbox Matches?": {
+      "main": [
+        [
+          {
+            "node": "Build Outlook Graph Poll Request",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Safe Outlook Graph Poll Diagnostic",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Outlook Graph Poll Request": {
+      "main": [
+        [
+          {
+            "node": "List Outlook Test Folder Messages",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "List Outlook Test Folder Messages": {
+      "main": [
+        [
+          {
+            "node": "Classify Outlook Graph Poll Response",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Classify Outlook Graph Poll Network Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Classify Outlook Graph Poll Response": {
+      "main": [
+        [
+          {
+            "node": "Outlook Graph Poll Is Error?",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    },
+    "Classify Outlook Graph Poll Network Error": {
+      "main": [
+        [
+          {
+            "node": "Retry Outlook Graph Poll?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Retry Outlook Graph Poll?": {
+      "main": [
+        [
+          {
+            "node": "Wait Before Outlook Graph Retry",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Safe Outlook Graph Poll Diagnostic",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Wait Before Outlook Graph Retry": {
+      "main": [
+        [
+          {
+            "node": "Prepare Outlook Graph Retry",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Outlook Graph Retry": {
+      "main": [
+        [
+          {
+            "node": "Retry Outlook Test Folder Messages",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Retry Outlook Test Folder Messages": {
+      "main": [
+        [
+          {
+            "node": "Classify Outlook Graph Retry Response",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Classify Outlook Graph Retry Network Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Classify Outlook Graph Retry Response": {
+      "main": [
+        [
+          {
+            "node": "Outlook Graph Retry Is Error?",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    },
+    "Classify Outlook Graph Retry Network Error": {
+      "main": [
+        [
+          {
+            "node": "Retry Outlook Graph Poll?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Safe Outlook Graph Poll Diagnostic": {
+      "main": [
+        []
+      ]
+    },
+    "Map and Validate Outlook Message": {
+      "main": [
+        [
+          {
+            "node": "Outlook Message Valid?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Outlook Message Valid?": {
+      "main": [
+        [
+          {
+            "node": "Build Outlook API Request",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Safe Invalid Outlook Message Diagnostic",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Outlook API Request": {
+      "main": [
+        [
+          {
+            "node": "Outlook API Request Size Valid?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Outlook API Request Size Valid?": {
+      "main": [
+        [
+          {
+            "node": "Outlook API Ingestion",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Safe Invalid Outlook Message Diagnostic",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Outlook API Ingestion": {
+      "main": [
+        [
+          {
+            "node": "Classify Outlook API Response",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Classify Outlook API Network Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Classify Outlook API Response": {
+      "main": [
+        [
+          {
+            "node": "Retry Outlook API Failure?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Classify Outlook API Network Error": {
+      "main": [
+        [
+          {
+            "node": "Retry Outlook API Failure?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Retry Outlook API Failure?": {
+      "main": [
+        [
+          {
+            "node": "Wait Before Outlook API Retry",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    },
+    "Wait Before Outlook API Retry": {
+      "main": [
+        [
+          {
+            "node": "Prepare Outlook API Retry",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Outlook API Retry": {
+      "main": [
+        [
+          {
+            "node": "Retry Outlook API Ingestion",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Retry Outlook API Ingestion": {
+      "main": [
+        [
+          {
+            "node": "Classify Outlook API Retry Response",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Classify Outlook API Retry Network Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Classify Outlook API Retry Response": {
+      "main": [
+        [
+          {
+            "node": "Retry Outlook API Failure Again?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Classify Outlook API Retry Network Error": {
+      "main": [
+        [
+          {
+            "node": "Retry Outlook API Failure Again?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Retry Outlook API Failure Again?": {
+      "main": [
+        [
+          {
+            "node": "Wait Before Outlook API Retry",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    },
+    "Safe Invalid Outlook Message Diagnostic": {
+      "main": [
+        []
+      ]
+    },
+    "Outlook Graph Poll Is Error?": {
+      "main": [
+        [
+          {
+            "node": "Retry Outlook Graph Poll?",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Map and Validate Outlook Message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Outlook Graph Retry Is Error?": {
+      "main": [
+        [
+          {
+            "node": "Retry Outlook Graph Poll?",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Map and Validate Outlook Message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "saveDataErrorExecution": "none",
+    "saveDataSuccessExecution": "none",
+    "saveExecutionProgress": false,
+    "callerPolicy": "workflowsFromSameOwner"
+  },
+  "versionId": "a7f1781d-1f2b-4d8d-97f6-1eaf469dd201",
+  "meta": {
+    "templateCredsSetupCompleted": false
+  },
+  "tags": []
+}

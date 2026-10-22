@@ -2,7 +2,7 @@
 
 ## Current repository status
 
-The private repository is [Monkey-D-Luisi/email-automation](https://github.com/Monkey-D-Luisi/email-automation). `feature/gmail-n8n-integration` is the default and current development branch and contains the complete Phase 1–4 implementation. `main` remains the Phase 1 baseline; `feature/ai-email-classification` and `feature/human-review-and-drafts` preserve the Phase 2 and Phase 3 branch tips. The branch histories are preserved; no feature branch was merged into `main`.
+The private repository is [Monkey-D-Luisi/email-automation](https://github.com/Monkey-D-Luisi/email-automation). The Outlook integration is developed on `feature/outlook-graph-integration`, based on the complete Phase 1–4 `feature/gmail-n8n-integration` branch. `main` remains the Phase 1 baseline; `feature/ai-email-classification` and `feature/human-review-and-drafts` preserve the Phase 2 and Phase 3 branch tips. The branch histories are preserved; no feature branch was merged into `main`.
 
 The project has no production deployment or live-provider acceptance. The complete setup for a second Windows computer is in [DEVELOPMENT_SETUP.md](DEVELOPMENT_SETUP.md). Repository publication does not copy User Secrets, OAuth credentials, n8n encrypted credentials, Docker volumes, local databases, or personal environment variables.
 
@@ -114,3 +114,19 @@ This remains a single-reviewer localhost demo using synthetic data. There is no 
 - Linux Node 22.16.0 frontend/workflow suite: **16/16 passed**. Release solution build passed with 0 warnings and 0 errors; the Next.js production build passed.
 - EF reported no pending model changes. The NuGet audit reported no vulnerable packages, and `npm audit --audit-level=moderate` reported 0 vulnerabilities.
 - No Gmail OAuth, live provider call, external draft creation, email send, push, or deployment was performed.
+
+## Outlook Graph integration — 2026-10-22
+
+- Added a disabled-by-default personal Microsoft account integration. Outlook service tokens use separate ingestion and draft-export policies. The API derives source and mailbox identity from configuration; draft exports, claim queries, callbacks, audit actions, and uniqueness are provider-scoped while existing Gmail defaults and routes remain compatible.
+- Added inactive, credential-free n8n workflow exports for custom test-folder ingestion and reviewer-approved draft creation. The read workflow verifies `/me`, requests text content and immutable message IDs, follows Graph pagination, and uses bounded read retries. The export verifies `/me`, calls only `POST /me/messages`, accepts only a confirmed draft response, and requires manual reconciliation after an uncertain outcome. The setup guide documents personal-account authority, delegated scopes, credential storage, and isolated test-folder configuration; it excludes `Mail.Send` and application permissions.
+- Added Outlook provider selection, mailbox and recipient confirmation, migration support, fixtures, and API/UI/workflow coverage. Message bodies remain plain text in PostgreSQL. Configure distinct provider `SourceId` values and protect the local API secrets, n8n editor, credential volume, and encryption key.
+
+### Verification
+
+- `dotnet restore SmartInbox.sln` and the Release solution build passed; the build reported zero warnings and errors.
+- PostgreSQL-backed `dotnet test SmartInbox.sln --configuration Release --no-restore` passed **125/125**: Domain 17, Application 51, Infrastructure 38, API 19.
+- Frontend and n8n tests passed **23/23**; the Next.js production build passed; `npm audit` and the transitive NuGet vulnerability audit reported no vulnerabilities.
+- EF reported no pending model changes, and `docker compose --profile integrations config -q` passed.
+- Imported the checked-in Outlook workflows into local n8n 2.44.5 and verified they were inactive with no credential references. Disposable n8n workflow copies completed the synthetic ingestion and export paths using mocked API responses and the `fake` / `fake-ambiguous` modes; Graph nodes were not reached. The existing local n8n service was restored and its health endpoint returned 200.
+- The completed Codex Security diff scan reviewed 45 code and workflow review items against base `80df27127a352e4fb42798c517c39b051e0ec32b` and reported no findings. Its immutable snapshot predates the provider-specific audit-summary correction, its PostgreSQL regression test, and the workflow test update that checks for personal Outlook-domain addresses without hardcoding one; these follow-ups were reviewed and covered by the final tests.
+- No Microsoft OAuth, live Graph request, mailbox poll, external draft creation, email send, or deployment was performed. OAuth grants and mailbox identity remain unverified; hosted CI status is separate from these local results.

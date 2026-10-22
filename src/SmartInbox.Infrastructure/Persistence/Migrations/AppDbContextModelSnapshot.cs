@@ -105,10 +105,20 @@ namespace SmartInbox.Infrastructure.Persistence.Migrations
                         .HasMaxLength(64)
                         .HasColumnType("character varying(64)");
 
+                    b.Property<string>("ExternalInternetMessageId")
+                        .HasMaxLength(512)
+                        .HasColumnType("character varying(512)");
+
                     b.Property<string>("ExternalMessageId")
                         .IsRequired()
                         .HasMaxLength(512)
                         .HasColumnType("character varying(512)");
+
+                    b.Property<string>("ExternalRecipientEmailsJson")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("jsonb")
+                        .HasDefaultValueSql("'[]'::jsonb");
 
                     b.Property<string>("ExternalThreadId")
                         .HasMaxLength(512)
@@ -279,6 +289,13 @@ namespace SmartInbox.Infrastructure.Persistence.Migrations
                     b.Property<DateTimeOffset?>("LeaseExpiresAt")
                         .HasColumnType("timestamp with time zone");
 
+                    b.Property<string>("Provider")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)")
+                        .HasDefaultValue("Gmail");
+
                     b.Property<string>("RecipientEmail")
                         .IsRequired()
                         .HasMaxLength(320)
@@ -313,9 +330,9 @@ namespace SmartInbox.Infrastructure.Persistence.Migrations
                     b.HasIndex("WorkItemId", "CreatedAt")
                         .HasDatabaseName("ix_gmail_draft_exports_work_item_created_at");
 
-                    b.HasIndex("DraftId", "ApprovedRevision", "DestinationMailboxId", "RecipientEmail")
+                    b.HasIndex("Provider", "DraftId", "ApprovedRevision", "DestinationMailboxId", "RecipientEmail")
                         .IsUnique()
-                        .HasDatabaseName("ux_gmail_draft_exports_draft_revision_destination_recipient");
+                        .HasDatabaseName("ux_gmail_draft_exports_provider_draft_revision_destination_recipient");
 
                     b.ToTable("gmail_draft_exports", null, t =>
                         {
@@ -324,6 +341,8 @@ namespace SmartInbox.Infrastructure.Persistence.Migrations
                             t.HasCheckConstraint("ck_gmail_draft_exports_content", "char_length(\"Subject\") BETWEEN 1 AND 998 AND char_length(\"Body\") BETWEEN 1 AND 20000");
 
                             t.HasCheckConstraint("ck_gmail_draft_exports_fingerprint", "\"ContentFingerprint\" ~ '^[0-9a-f]{64}$'");
+
+                            t.HasCheckConstraint("ck_gmail_draft_exports_provider", "\"Provider\" IN ('Gmail', 'Outlook')");
 
                             t.HasCheckConstraint("ck_gmail_draft_exports_revision", "\"ApprovedRevision\" > 0");
 
@@ -484,7 +503,7 @@ namespace SmartInbox.Infrastructure.Persistence.Migrations
 
                     b.ToTable("work_item_audit_entries", null, t =>
                         {
-                            t.HasCheckConstraint("ck_work_item_audit_action", "\"Action\" IN ('Created', 'ReviewStarted', 'CategoryCorrected', 'PriorityCorrected', 'NotesChanged', 'MissingInformationChanged', 'FactVerified', 'FactCorrected', 'FactRejected', 'DraftCreated', 'DraftEdited', 'DraftApproved', 'DraftRejected', 'GmailDraftExportRequested', 'GmailDraftExportClaimed', 'GmailDraftExportSucceeded', 'GmailDraftExportFailed', 'GmailDraftExportNeedsReconciliation', 'GmailDraftExportCancelled', 'GmailDraftExportRetryAuthorized', 'GmailDraftExportReconciled', 'Resolved')");
+                            t.HasCheckConstraint("ck_work_item_audit_action", "\"Action\" IN ('Created', 'ReviewStarted', 'CategoryCorrected', 'PriorityCorrected', 'NotesChanged', 'MissingInformationChanged', 'FactVerified', 'FactCorrected', 'FactRejected', 'DraftCreated', 'DraftEdited', 'DraftApproved', 'DraftRejected', 'GmailDraftExportRequested', 'GmailDraftExportClaimed', 'GmailDraftExportSucceeded', 'GmailDraftExportFailed', 'GmailDraftExportNeedsReconciliation', 'GmailDraftExportCancelled', 'GmailDraftExportRetryAuthorized', 'GmailDraftExportReconciled', 'OutlookDraftExportRequested', 'OutlookDraftExportClaimed', 'OutlookDraftExportSucceeded', 'OutlookDraftExportFailed', 'OutlookDraftExportNeedsReconciliation', 'OutlookDraftExportCancelled', 'OutlookDraftExportRetryAuthorized', 'OutlookDraftExportReconciled', 'Resolved')");
                         });
                 });
 

@@ -6,6 +6,8 @@ public sealed record InboundMessageResponseV1(
     string MailboxId,
     string ExternalMessageId,
     string? ExternalThreadId,
+    string? ExternalInternetMessageId,
+    IReadOnlyList<string> ExternalRecipientEmails,
     string? SenderEmail,
     string? SenderName,
     string Subject,

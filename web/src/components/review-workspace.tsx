@@ -5,11 +5,11 @@ import { useRouter } from "next/navigation";
 import {
   createGmailDraftExport, getGmailDraftExports, getHistory, getSession, getWorkItem, listWorkItems,
   mutateWorkItem, reconcileGmailDraftExport, retryGmailDraftExport, signOut,
-  type AuditEntry, type GmailDraftExport, type GmailDraftExportList, type ReviewerSession,
+  type AuditEntry, type DraftExportProvider, type GmailDraftExport, type GmailDraftExportList, type ReviewerSession,
   type WorkItem, type WorkItemFilters, type WorkItemPage,
 } from "../lib/api";
 import {
-  canApproveDraft, canManuallyResolveGmailDraftExport, canRequestGmailDraft, canVerifyFact,
+  canApproveDraft, canManuallyResolveGmailDraftExport, canRequestDraftExport, canVerifyFact,
   loadFailed, loading, mutationFailure, type LoadState,
 } from "../lib/review-state";
 
@@ -45,6 +45,7 @@ export default function ReviewWorkspace() {
   const [draftBody, setDraftBody] = useState("");
   const [draftFeedback, setDraftFeedback] = useState("");
   const [exportRecipient, setExportRecipient] = useState("");
+  const [exportProvider, setExportProvider] = useState<DraftExportProvider>("Gmail");
   const [recipientConfirmed, setRecipientConfirmed] = useState(false);
   const [noDraftExistsConfirmed, setNoDraftExistsConfirmed] = useState(false);
   const [reconciledDraftId, setReconciledDraftId] = useState("");
@@ -58,6 +59,11 @@ export default function ReviewWorkspace() {
   useEffect(() => {
     if (session === null) router.replace("/login");
   }, [router, session]);
+
+  useEffect(() => {
+    if (session && !session.gmailDraftExportEnabled && session.outlookDraftExportEnabled)
+      setExportProvider("Outlook");
+  }, [session]);
 
   useEffect(() => {
     if (!session) return;
@@ -136,8 +142,12 @@ export default function ReviewWorkspace() {
   const unverifiedCount = current?.facts.filter(fact => fact.status === "Unverified").length ?? 0;
   const itemBase = current ? `/api/v1/work-items/${current.id}` : "";
   const listedExports = gmailExports.status === "ready" ? gmailExports.value.exports : [];
-  const canCreateGmailDraft = Boolean(current && canRequestGmailDraft({
-    enabled: session?.gmailDraftExportEnabled === true && gmailExports.status === "ready" && gmailExports.value.enabled,
+  const selectedDestination = exportProvider === "Gmail"
+    ? { enabled: session?.gmailDraftExportEnabled === true && gmailExports.status === "ready" && gmailExports.value.enabled, mailboxId: session?.gmailDraftExportMailboxId ?? null }
+    : { enabled: session?.outlookDraftExportEnabled === true && gmailExports.status === "ready" && gmailExports.value.outlookEnabled, mailboxId: session?.outlookDraftExportMailboxId ?? null };
+  const canCreateExternalDraft = Boolean(current && canRequestDraftExport({
+    provider: exportProvider,
+    enabled: selectedDestination.enabled,
     workItemStatus: current.status,
     reviewerOwnsItem: current.assignedReviewerId === session?.reviewerId,
     revision: revision?.revision ?? null,
@@ -150,7 +160,7 @@ export default function ReviewWorkspace() {
     confirmedRecipient: exportRecipient,
     recipientConfirmed,
     exports: listedExports,
-    mailboxId: gmailExports.status === "ready" ? gmailExports.value.destinationMailboxId : null,
+    mailboxId: selectedDestination.mailboxId,
   }));
   const pages = inbox.status === "ready" ? Math.max(1, Math.ceil(inbox.value.totalCount / inbox.value.pageSize)) : 1;
 
@@ -173,28 +183,29 @@ export default function ReviewWorkspace() {
   }
 
   async function createExternalDraft() {
-    if (!current || !revision || !canCreateGmailDraft || !session?.gmailDraftExportMailboxId) return;
+    if (!current || !revision || !canCreateExternalDraft || !selectedDestination.mailboxId) return;
     const request = {
       expectedVersion: current.version,
       revision: revision.revision,
-      destinationMailboxId: session.gmailDraftExportMailboxId,
+      destinationMailboxId: selectedDestination.mailboxId,
       recipientEmail: exportRecipient,
+      provider: exportProvider,
     };
-    await act(`${itemBase}/draft-exports`, request, "POST", "Gmail draft export requested.",
+    await act(`${itemBase}/draft-exports`, request, "POST", `${exportProvider} draft export requested.`,
       () => createGmailDraftExport(current.id, request));
   }
 
   async function retryExternalDraft(exported: GmailDraftExport) {
     if (!current || !noDraftExistsConfirmed) return;
-    const request = { expectedVersion: current.version, confirmedNoDraftExists: true };
-    await act(`${itemBase}/draft-exports/${exported.id}/retry`, request, "POST", "Gmail draft export queued after manual verification.",
+    const request = { expectedVersion: current.version, confirmedNoDraftExists: true, provider: exported.provider };
+    await act(`${itemBase}/draft-exports/${exported.id}/retry`, request, "POST", `${exported.provider} draft export queued after manual verification.`,
       () => retryGmailDraftExport(current.id, exported.id, request));
   }
 
   async function recordFoundDraft(exported: GmailDraftExport) {
     if (!current || !reconciledDraftId.trim()) return;
-    const request = { expectedVersion: current.version, gmailDraftId: reconciledDraftId.trim() };
-    await act(`${itemBase}/draft-exports/${exported.id}/reconcile`, request, "POST", "Found Gmail draft recorded.",
+    const request = { expectedVersion: current.version, provider: exported.provider, externalDraftId: reconciledDraftId.trim() };
+    await act(`${itemBase}/draft-exports/${exported.id}/reconcile`, request, "POST", `Found ${exported.provider} draft recorded.`,
       () => reconcileGmailDraftExport(current.id, exported.id, request));
   }
 
@@ -282,25 +293,29 @@ export default function ReviewWorkspace() {
                   {revision && <div className="decision-box"><label>Decision feedback<textarea rows={2} maxLength={500} value={draftFeedback} onChange={event => setDraftFeedback(event.target.value)} disabled={!canEdit || revision.status !== "Draft"} placeholder="Optional reason for rejection" /></label><div className="draft-actions"><button className="primary" disabled={!canEdit || !canApproveDraft(revision.status, revision.subject, revision.body, draftSubject, draftBody)} onClick={() => void act(`${itemBase}/draft/approve`, { expectedVersion: current.version, revision: revision.revision }, "POST", "Draft approved for a future separately controlled workflow.")}>Approve revision</button><button className="danger-button" disabled={!canEdit || revision.status !== "Draft"} onClick={() => void act(`${itemBase}/draft/reject`, { expectedVersion: current.version, revision: revision.revision, feedback: draftFeedback }, "POST", "Draft rejected.")}>Reject revision</button></div>{revision.decidedAt && <p className="small-meta">{revision.status} by {revision.decidedBy} · {formatDate(revision.decidedAt)}{revision.feedback ? ` · ${revision.feedback}` : ""}</p>}{revision.generationMetrics && <p className="small-meta">Generated with {revision.generationMetrics.providerId} / {revision.generationMetrics.model}{revision.generationMetrics.outputTokens !== null ? ` · ${revision.generationMetrics.outputTokens} output tokens` : ""}{revision.generationMetrics.estimatedCostUsd !== null ? ` · estimated $${revision.generationMetrics.estimatedCostUsd.toFixed(4)}` : ""}</p>}</div>}
                 </section>
 
-                {session.gmailDraftExportEnabled && <section className="panel section-card gmail-export-card">
-                  <div className="section-heading"><div><p className="eyebrow">EXTERNAL DRAFT</p><h3>Create Gmail Draft</h3></div></div>
-                  <p className="muted">This creates an unsent draft in Gmail. It never sends a message.</p>
-                  <p className="recipient-line">Destination mailbox: <strong>{session.gmailDraftExportMailboxId}</strong></p>
+                {(session.gmailDraftExportEnabled || session.outlookDraftExportEnabled) && <section className="panel section-card gmail-export-card">
+                  <div className="section-heading"><div><p className="eyebrow">EXTERNAL DRAFT</p><h3>Create {exportProvider} Draft</h3></div></div>
+                  <p className="muted">This creates an unsent draft in {exportProvider}. It never sends a message.</p>
+                  <label>Destination provider<select value={exportProvider} onChange={event => { setExportProvider(event.target.value as DraftExportProvider); setRecipientConfirmed(false); setNoDraftExistsConfirmed(false); }} disabled={!canEdit}>
+                    {session.gmailDraftExportEnabled && session.gmailDraftExportMailboxId && <option value="Gmail">Gmail</option>}
+                    {session.outlookDraftExportEnabled && session.outlookDraftExportMailboxId && <option value="Outlook">Outlook</option>}
+                  </select></label>
+                  <p className="recipient-line">Destination mailbox: <strong>{selectedDestination.mailboxId}</strong></p>
                   {revision?.status !== "Approved" && <p className="muted callout">The current response revision must be approved before it can be exported.</p>}
                   {current.draft && <>
                     <label>Confirm recipient<input value={exportRecipient} onChange={event => { setExportRecipient(event.target.value); setRecipientConfirmed(false); }} disabled={!canEdit} /></label>
-                    <label className="checkbox-label"><input type="checkbox" checked={recipientConfirmed} onChange={event => setRecipientConfirmed(event.target.checked)} disabled={!canEdit} /> I confirm this recipient and authorize creation of the unsent Gmail draft.</label>
-                    <button className="primary" type="button" disabled={!canEdit || !canCreateGmailDraft || gmailExports.status !== "ready"} onClick={() => void createExternalDraft()}>Create Gmail Draft</button>
+                    <label className="checkbox-label"><input type="checkbox" checked={recipientConfirmed} onChange={event => setRecipientConfirmed(event.target.checked)} disabled={!canEdit} /> I confirm this recipient, destination mailbox, and approved revision, and authorize creation of the unsent {exportProvider} draft.</label>
+                    <button className="primary" type="button" disabled={!canEdit || !canCreateExternalDraft || gmailExports.status !== "ready"} onClick={() => void createExternalDraft()}>Create {exportProvider} Draft</button>
                   </>}
                   {gmailExports.status === "loading" && <p className="muted">Loading export status…</p>}
                   {gmailExports.status === "error" && <p className="form-error" role="alert">{gmailExports.message}</p>}
-                  {gmailExports.status === "ready" && gmailExports.value.exports.length === 0 && <p className="muted">No Gmail draft exports have been requested.</p>}
+                  {gmailExports.status === "ready" && gmailExports.value.exports.length === 0 && <p className="muted">No external draft exports have been requested.</p>}
                   {gmailExports.status === "ready" && <div className="gmail-export-list">{gmailExports.value.exports.map(exported => <div className="gmail-export-item" key={exported.id}>
-                    <div><strong>{exported.status}</strong><span>Revision {exported.approvedRevision} · {exported.recipientEmail}</span>{exported.gmailDraftId && <span>Gmail draft ID: <code>{exported.gmailDraftId}</code></span>}{exported.failureKind && <span className="muted">{exported.failureKind === "ProviderOutcomeUnknown" ? "Gmail may have created the draft; check Gmail before retrying." : "The provider call did not start."}</span>}</div>
+                    <div><strong>{exported.provider} · {exported.status}</strong><span>Revision {exported.approvedRevision} · {exported.destinationMailboxId} · {exported.recipientEmail}</span>{exported.externalDraftId && <span>{exported.provider} draft ID: <code>{exported.externalDraftId}</code></span>}{exported.failureKind && <span className="muted">{exported.failureKind === "ProviderOutcomeUnknown" ? `${exported.provider} may have created the draft; check its Drafts folder before retrying.` : "The provider call did not start."}</span>}</div>
                     {canManuallyResolveGmailDraftExport(exported.status) && <div className="gmail-export-resolution">
-                      <label className="checkbox-label"><input type="checkbox" checked={noDraftExistsConfirmed} onChange={event => setNoDraftExistsConfirmed(event.target.checked)} disabled={!canEdit} /> I checked the configured mailbox and confirmed no matching draft exists.</label>
-                      <button className="secondary" type="button" disabled={!canEdit || !noDraftExistsConfirmed} onClick={() => void retryExternalDraft(exported)}>Retry after checking Gmail</button>
-                      <label>Found Gmail draft ID<input value={reconciledDraftId} onChange={event => setReconciledDraftId(event.target.value)} disabled={!canEdit} /></label>
+                      <label className="checkbox-label"><input type="checkbox" checked={noDraftExistsConfirmed} onChange={event => setNoDraftExistsConfirmed(event.target.checked)} disabled={!canEdit} /> I checked the configured {exported.provider} mailbox and confirmed no matching draft exists.</label>
+                      <button className="secondary" type="button" disabled={!canEdit || !noDraftExistsConfirmed} onClick={() => void retryExternalDraft(exported)}>Retry after checking {exported.provider}</button>
+                      <label>Found {exported.provider} draft ID<input value={reconciledDraftId} onChange={event => setReconciledDraftId(event.target.value)} disabled={!canEdit} /></label>
                       <button className="secondary" type="button" disabled={!canEdit || !reconciledDraftId.trim()} onClick={() => void recordFoundDraft(exported)}>Record found draft</button>
                     </div>}
                   </div>)}</div>}

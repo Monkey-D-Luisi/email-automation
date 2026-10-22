@@ -18,6 +18,8 @@ public sealed record ReceiveInboundMessageCommand(
     string Subject,
     string BodyText,
     DateTimeOffset ReceivedAt,
-    IReadOnlyList<InboundAttachmentInput?>? Attachments) : IRequest<ReceiveInboundMessageResult>;
+    IReadOnlyList<InboundAttachmentInput?>? Attachments,
+    string? ExternalInternetMessageId = null,
+    IReadOnlyList<string>? ExternalRecipientEmails = null) : IRequest<ReceiveInboundMessageResult>;
 
 public sealed record ReceiveInboundMessageResult(Guid Id, bool Created);

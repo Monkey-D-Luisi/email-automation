@@ -29,7 +29,9 @@ public sealed class ReceiveInboundMessageCommandHandler(
             command.BodyText,
             command.ReceivedAt,
             timeProvider.GetUtcNow(),
-            attachments);
+            attachments,
+            command.ExternalInternetMessageId,
+            command.ExternalRecipientEmails);
 
         var result = await repository.AddIfAbsentAsync(message, cancellationToken);
         if (!StringComparer.Ordinal.Equals(

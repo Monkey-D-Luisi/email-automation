@@ -1,0 +1,14 @@
+{
+  "id": "AAMkAGI2-test-message-html-001",
+  "internetMessageId": "<synthetic-outlook-html@example.test>",
+  "conversationId": "synthetic-outlook-conversation-001",
+  "receivedDateTime": "2026-10-22T08:16:00Z",
+  "subject": "HTML only",
+  "from": { "emailAddress": { "name": "Synthetic Sender", "address": "alex@example.test" } },
+  "toRecipients": [],
+  "body": {
+    "contentType": "html",
+    "content": "<h1>Invoice</h1><script>doNotRun()</script><p>A &amp; B&nbsp;&#x21;</p>"
+  },
+  "attachments": []
+}

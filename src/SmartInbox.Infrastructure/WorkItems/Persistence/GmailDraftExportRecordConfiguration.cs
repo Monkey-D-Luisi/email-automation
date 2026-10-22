@@ -9,6 +9,7 @@ internal sealed class GmailDraftExportRecordConfiguration : IEntityTypeConfigura
     {
         builder.ToTable("gmail_draft_exports", table =>
         {
+            table.HasCheckConstraint("ck_gmail_draft_exports_provider", "\"Provider\" IN ('Gmail', 'Outlook')");
             table.HasCheckConstraint("ck_gmail_draft_exports_status", "\"Status\" IN ('Pending', 'InProgress', 'Succeeded', 'Failed', 'NeedsReconciliation', 'Cancelled')");
             table.HasCheckConstraint("ck_gmail_draft_exports_revision", "\"ApprovedRevision\" > 0");
             table.HasCheckConstraint("ck_gmail_draft_exports_attempt_count", "\"AttemptCount\" >= 0");
@@ -17,15 +18,17 @@ internal sealed class GmailDraftExportRecordConfiguration : IEntityTypeConfigura
             table.HasCheckConstraint("ck_gmail_draft_exports_state", "(\"Status\" = 'Pending' AND \"ClaimedAt\" IS NULL AND \"LeaseExpiresAt\" IS NULL AND \"CompletedAt\" IS NULL AND \"GmailDraftId\" IS NULL AND \"FailureKind\" IS NULL) OR (\"Status\" = 'InProgress' AND \"AttemptId\" IS NOT NULL AND \"ClaimedAt\" IS NOT NULL AND \"LeaseExpiresAt\" IS NOT NULL AND \"CompletedAt\" IS NULL AND \"GmailDraftId\" IS NULL AND \"FailureKind\" IS NULL) OR (\"Status\" = 'Succeeded' AND \"AttemptId\" IS NOT NULL AND \"ClaimedAt\" IS NULL AND \"LeaseExpiresAt\" IS NULL AND \"CompletedAt\" IS NOT NULL AND \"GmailDraftId\" IS NOT NULL AND \"FailureKind\" IS NULL) OR (\"Status\" IN ('Failed', 'NeedsReconciliation') AND \"AttemptId\" IS NOT NULL AND \"ClaimedAt\" IS NULL AND \"LeaseExpiresAt\" IS NULL AND \"CompletedAt\" IS NOT NULL AND \"GmailDraftId\" IS NULL AND \"FailureKind\" IS NOT NULL) OR (\"Status\" = 'Cancelled' AND \"ClaimedAt\" IS NULL AND \"LeaseExpiresAt\" IS NULL AND \"CompletedAt\" IS NOT NULL AND \"GmailDraftId\" IS NULL AND \"FailureKind\" IS NULL)");
         });
         builder.HasKey(export => export.Id);
+        builder.Property(export => export.Provider).HasMaxLength(16).HasDefaultValue("Gmail").IsRequired();
         builder.HasIndex(export => new
             {
+                export.Provider,
                 export.DraftId,
                 export.ApprovedRevision,
                 export.DestinationMailboxId,
                 export.RecipientEmail,
             })
             .IsUnique()
-            .HasDatabaseName("ux_gmail_draft_exports_draft_revision_destination_recipient");
+            .HasDatabaseName("ux_gmail_draft_exports_provider_draft_revision_destination_recipient");
         builder.HasIndex(export => new { export.Status, export.CreatedAt })
             .HasDatabaseName("ix_gmail_draft_exports_status_created_at");
         builder.HasIndex(export => new { export.WorkItemId, export.CreatedAt })

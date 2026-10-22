@@ -7,6 +7,7 @@ internal static class GmailDraftExportPersistenceMapper
     public static GmailDraftExportRecord ToRecord(GmailDraftExport export) => new()
     {
         Id = export.Id,
+        Provider = export.Provider.ToString(),
         WorkItemId = export.WorkItemId,
         DraftId = export.DraftId,
         DraftRevisionId = export.DraftRevisionId,
@@ -25,7 +26,7 @@ internal static class GmailDraftExportPersistenceMapper
         AttemptId = export.AttemptId,
         ClaimedAt = export.ClaimedAt,
         LeaseExpiresAt = export.LeaseExpiresAt,
-        GmailDraftId = export.GmailDraftId,
+        GmailDraftId = export.ExternalDraftId,
         FailureKind = export.FailureKind?.ToString(),
     };
 
@@ -50,7 +51,8 @@ internal static class GmailDraftExportPersistenceMapper
         record.ClaimedAt,
         record.LeaseExpiresAt,
         record.GmailDraftId,
-        record.FailureKind is null ? null : Enum.Parse<GmailDraftExportFailureKind>(record.FailureKind));
+        record.FailureKind is null ? null : Enum.Parse<GmailDraftExportFailureKind>(record.FailureKind),
+        Enum.Parse<DraftExportProvider>(record.Provider));
 
     public static void Update(GmailDraftExportRecord record, GmailDraftExport export)
     {
@@ -61,7 +63,8 @@ internal static class GmailDraftExportPersistenceMapper
         record.AttemptId = export.AttemptId;
         record.ClaimedAt = export.ClaimedAt;
         record.LeaseExpiresAt = export.LeaseExpiresAt;
-        record.GmailDraftId = export.GmailDraftId;
+        record.Provider = export.Provider.ToString();
+        record.GmailDraftId = export.ExternalDraftId;
         record.FailureKind = export.FailureKind?.ToString();
     }
 }

@@ -3,6 +3,7 @@ namespace SmartInbox.Infrastructure.WorkItems.Persistence;
 internal sealed class GmailDraftExportRecord
 {
     public Guid Id { get; set; }
+    public string Provider { get; set; } = "Gmail";
     public Guid WorkItemId { get; set; }
     public Guid DraftId { get; set; }
     public Guid DraftRevisionId { get; set; }

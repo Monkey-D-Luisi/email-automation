@@ -21,3 +21,10 @@
 ## Scope limits
 
 The MVP creates standalone Gmail drafts because the current persisted message contract does not retain the RFC headers needed to establish reply threading safely. It does not send mail, change labels/read state, download attachments, or call a live AI provider. OAuth scopes and the fact that `gmail.compose` can also send must be documented explicitly.
+
+## Outlook Graph extension
+
+- Outlook reuses the inbound message command and provider-scoped export state. Its dedicated API routes set the configured source and mailbox; n8n cannot select another mailbox in the message payload. Graph message IDs are the idempotency key. RFC `internetMessageId`, recipient emails, and `conversationId` are stored separately as metadata.
+- Delegated OAuth uses the `consumers` authority for personal Microsoft accounts. Read and draft-create credentials are separate, the latter uses `Mail.ReadWrite`, and neither requests `Mail.Send`. Both live paths verify Graph `/me` against the locally configured mailbox.
+- Ingestion polls only a configured custom test-folder ID after a fixed UTC cutoff and follows `@odata.nextLink` pages. It does not search Inbox or system folders, mutate messages, or download attachment bytes. The fixed cutoff repeats the small scope and relies on the database idempotency key; durable delta tracking is outside this test integration.
+- Export creates a message with Graph `POST /me/messages`, validates `201`, ID, and `isDraft`, then reports an attempt-scoped callback. An uncertain outcome is never automatically retried; a reviewer must reconcile Drafts before any manual retry. Neither provider integration sends mail.

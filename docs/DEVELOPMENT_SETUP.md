@@ -1,8 +1,8 @@
 # Development setup on Windows
 
-This guide targets the private `Monkey-D-Luisi/email-automation` repository. The full Phase 1–4 implementation is on `feature/gmail-n8n-integration`, which is the default branch. `main` remains the Phase 1 baseline; `feature/ai-email-classification` contains Phase 2 and `feature/human-review-and-drafts` contains Phase 3.
+This guide targets the private `Monkey-D-Luisi/email-automation` repository. The complete Gmail baseline is on `feature/gmail-n8n-integration`; the Outlook extension is on `feature/outlook-graph-integration`. `main` remains the Phase 1 baseline; `feature/ai-email-classification` contains Phase 2 and `feature/human-review-and-drafts` contains Phase 3.
 
-Use synthetic email data only. This setup does not require OpenAI or Gmail credentials and does not send email.
+Use synthetic email data only. This setup does not require OpenAI or Gmail/Outlook credentials and does not contact either provider or send email.
 
 ## Prerequisites
 
@@ -20,11 +20,12 @@ Authenticate with an account that has access to the private repository, then run
 ```powershell
 git clone https://github.com/Monkey-D-Luisi/email-automation.git
 Set-Location email-automation
-git switch feature/gmail-n8n-integration
+git fetch origin feature/outlook-graph-integration
+git switch --track origin/feature/outlook-graph-integration
 git status --short --branch
 ```
 
-The default branch is already `feature/gmail-n8n-integration`; the explicit switch also works when cloning a branch by name. Keep local changes and secrets out of commits.
+The Outlook branch contains the complete Phase 1–4 implementation plus the Outlook extension. Keep local changes and secrets out of commits.
 
 ## Start PostgreSQL
 
@@ -63,6 +64,8 @@ dotnet user-secrets set 'EmailProcessing:Enabled' 'true' --project $apiProject
 dotnet user-secrets set 'EmailAnalysis:Provider' 'fake' --project $apiProject
 Remove-Variable serviceToken, reviewerPassword
 ```
+
+Keep the generic service token and reviewer password distinct. When an email integration is enabled, its ingestion and draft-export tokens must also be unique across all enabled authentication schemes; startup validation enforces this.
 
 Keep the reviewer password in a local password manager so you can sign in later. User Secrets are stored outside Git and are not restored by cloning the repository. The fake provider returns synthetic, review-required classifications. Do not switch to the OpenAI provider or enable AI draft generation unless you separately intend to configure and use a billable provider.
 
@@ -125,17 +128,17 @@ npm audit
 Pop-Location
 ```
 
-GitHub Actions runs these checks on `main` and `feature/**` pushes and pull requests. CI uses an isolated PostgreSQL service and synthetic/fake provider paths; it needs no production secrets and makes no Gmail or OpenAI calls. The hosted result is separate from local test results; see [Handoff](HANDOFF.md) for the latest run.
+GitHub Actions runs these checks on `main` and `feature/**` pushes and pull requests. CI uses an isolated PostgreSQL service and synthetic/fake provider paths; it needs no production secrets and makes no Gmail, Outlook, Graph, or OpenAI calls. The hosted result is separate from local test results; see [Handoff](HANDOFF.md) for the latest run.
 
 ## Optional n8n integration in fake mode
 
-n8n is optional and disabled by default. Its workflows are imported inactive. For a local fake integration run, configure the Gmail integration with local User Secrets, set `SMARTINBOX_GMAIL_MODE=fake` in `.env`, and use n8n-managed test credentials. The fake workflow uses synthetic IDs and makes no Gmail request. Follow [the n8n guide](../integrations/n8n/README.md) for the required settings, import steps, host networking, and workflow checks. Do not configure OAuth or activate a live workflow as part of routine setup.
+n8n is optional and disabled by default. Its workflows are imported inactive. For local fake integration runs, set the matching provider mode in ignored `.env` and use n8n-managed test Bearer Auth credentials; the fake Outlook export records only a synthetic ID and makes no Graph request. Follow [the n8n guide](../integrations/n8n/README.md) and [Outlook test setup](OUTLOOK_TEST_SETUP.md) for configuration and the separate live-authentication boundary. Do not activate a live workflow as part of routine setup.
 
 ## Local state that Git does not restore
 
 A clone contains source, documentation, workflow exports, and migrations. It does not contain:
 
-- .NET User Secrets, reviewer passwords, service tokens, OAuth client secrets, or Google access and refresh tokens.
+- .NET User Secrets, reviewer passwords, service tokens, OAuth client secrets, or provider access and refresh tokens.
 - The local `.env`, personal environment variables, n8n encrypted credentials, or the n8n encryption key.
 - PostgreSQL or n8n Docker volumes, local databases, or local mailbox data.
 

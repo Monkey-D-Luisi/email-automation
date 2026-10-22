@@ -1,0 +1,9 @@
+{
+  "id": "AAMkAGI2-test-message-no-sender",
+  "conversationId": "synthetic-outlook-conversation-001",
+  "receivedDateTime": "2026-10-22T08:17:00Z",
+  "subject": "Missing optional sender",
+  "toRecipients": [],
+  "body": { "contentType": "text", "content": "Synthetic body." },
+  "attachments": []
+}

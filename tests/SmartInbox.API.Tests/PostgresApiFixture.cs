@@ -23,6 +23,8 @@ public sealed class PostgresApiFixture : IAsyncLifetime
     private const string TestToken = "test-token-for-service-authentication-0123456789abcdef";
     public const string GmailIngestionTestToken = "test-token-for-gmail-ingestion-0123456789abcdef";
     public const string GmailDraftExportTestToken = "test-token-for-gmail-draft-export-0123456789abcdef";
+    public const string OutlookIngestionTestToken = "test-token-for-outlook-ingestion-0123456789abcdef";
+    public const string OutlookDraftExportTestToken = "test-token-for-outlook-draft-export-0123456789abcdef";
     public const string GmailTestMailboxId = "integration-test-mailbox";
     private const long MigrationLockId = 824_111_177;
     private WebApplicationFactory<Program>? factory;
@@ -137,6 +139,11 @@ public sealed class PostgresApiFixture : IAsyncLifetime
                     ["GmailIntegration:MailboxId"] = GmailTestMailboxId,
                     ["GmailIntegration:IngestionToken"] = GmailIngestionTestToken,
                     ["GmailIntegration:DraftExportToken"] = GmailDraftExportTestToken,
+                    ["OutlookIntegration:Enabled"] = "true",
+                    ["OutlookIntegration:SourceId"] = "outlook-test",
+                    ["OutlookIntegration:MailboxId"] = GmailTestMailboxId,
+                    ["OutlookIntegration:IngestionToken"] = OutlookIngestionTestToken,
+                    ["OutlookIntegration:DraftExportToken"] = OutlookDraftExportTestToken,
                 }));
             builder.ConfigureTestServices(services =>
             {

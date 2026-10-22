@@ -1,8 +1,8 @@
 # Smart Inbox Automation
 
-Smart Inbox Automation is a private repository for a local demo that receives, validates, deduplicates, classifies, and reviews synthetic email messages. Phases 1–4 are implemented. The complete implementation is on `feature/gmail-n8n-integration`; `main` is the Phase 1 baseline. The Phase 4 branch is the repository default branch.
+Smart Inbox Automation is a private repository for a local demo that receives, validates, deduplicates, classifies, and reviews synthetic email messages. Phases 1–4 are implemented. The Outlook extension is on `feature/outlook-graph-integration`, based on the complete `feature/gmail-n8n-integration` Phase 4 branch; `main` is the Phase 1 baseline.
 
-For a fresh Windows machine, start with [docs/DEVELOPMENT_SETUP.md](docs/DEVELOPMENT_SETUP.md). Use synthetic data only. No real Gmail OAuth, live Gmail polling, external draft creation, email sending, or live OpenAI requests are included in automated validation.
+For a fresh Windows machine, start with [docs/DEVELOPMENT_SETUP.md](docs/DEVELOPMENT_SETUP.md). Use synthetic data only. No live Gmail or Outlook OAuth, mailbox polling, external draft creation, email sending, Graph request, or live OpenAI request is included in automated validation.
 
 ## Architecture
 
@@ -193,11 +193,11 @@ The backend integration test `WorkItemEndpointsTests.Reviewer_can_correct_verify
 
 ### Gmail and n8n integration
 
-Phase 4 adds an optional, disabled-by-default n8n container and two inactive workflows. Start n8n only when needed with `docker compose --profile integrations up -d n8n`; the editor listens on `http://127.0.0.1:5678`. The API remains on the host, so when using n8n in Docker, start it with `ASPNETCORE_URLS=http://0.0.0.0:5168` and allow the `host.docker.internal` host header. Stop the listener after the local integration session. The workflows use the host gateway and separate service tokens; they do not use the browser reviewer cookie.
+Phase 4 includes Gmail and Outlook integrations through an optional, disabled-by-default n8n container. Importable workflow exports remain inactive. Start n8n only when needed with `docker compose --profile integrations up -d n8n`; the editor listens on `http://127.0.0.1:5678`. The API remains on the host, so when using n8n in Docker, start it with `ASPNETCORE_URLS=http://0.0.0.0:5168` and allow the `host.docker.internal` host header. Stop the listener after the local integration session. The workflows use the host gateway and separate service tokens; they do not use the browser reviewer cookie.
 
-Follow [integrations/n8n/README.md](integrations/n8n/README.md) for local-only synthetic mode, workflow import, token setup, Google OAuth configuration, and the live activation checklist. Importing the workflow files does not activate them. Internal approval alone never creates a Gmail artifact; a reviewer must confirm the configured mailbox and recipient and request an unsent Gmail draft. The integration has no send action. Gmail `gmail.compose` OAuth permission can still send mail, so live credentials must remain restricted to an explicitly authorized test account.
+Follow [integrations/n8n/README.md](integrations/n8n/README.md) for local-only synthetic mode and workflow import. The step-by-step Outlook.com OAuth and isolated-folder procedure is in [docs/OUTLOOK_TEST_SETUP.md](docs/OUTLOOK_TEST_SETUP.md). Importing a workflow does not activate it. Internal approval alone never creates an external artifact; a reviewer must confirm the provider, configured mailbox, and recipient and request an unsent draft. Neither workflow has a send action. Gmail `gmail.compose` and Outlook `Mail.ReadWrite` allow broader provider operations than these draft-only workflows, so keep their credentials limited to an explicitly authorized test account.
 
-An expired outbound claim or uncertain Gmail response requires manual reconciliation. Check the configured account's Drafts before retrying; a located draft ID can be recorded in the review panel. Gmail draft creation is not exactly-once, and email reply threading is unsupported in this MVP.
+An expired outbound claim or uncertain provider response requires manual reconciliation. Check the configured account's Drafts before retrying; a located external draft ID can be recorded in the review panel. Draft creation is not exactly-once, and email reply threading is unsupported in this MVP. Outlook polling is restricted to a configured custom test folder and fixed UTC cutoff; it re-reads that small scope on each run and has no durable Graph delta checkpoint.
 
 Review history and message content remain in PostgreSQL until the operator removes them. Deletion, retention schedules, encryption at rest, credential rotation, and multi-reviewer access controls are not implemented. Use synthetic data on localhost only.
 

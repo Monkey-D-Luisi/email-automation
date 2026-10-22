@@ -74,6 +74,8 @@ public sealed class GmailIntegrationEndpointsTests(PostgresApiFixture fixture)
         using var session = JsonDocument.Parse(await sessionResponse.Content.ReadAsStringAsync());
         Assert.True(session.RootElement.GetProperty("gmailDraftExportEnabled").GetBoolean());
         Assert.Equal(PostgresApiFixture.GmailTestMailboxId, session.RootElement.GetProperty("gmailDraftExportMailboxId").GetString());
+        Assert.True(session.RootElement.GetProperty("outlookDraftExportEnabled").GetBoolean());
+        Assert.Equal(PostgresApiFixture.GmailTestMailboxId, session.RootElement.GetProperty("outlookDraftExportMailboxId").GetString());
 
         using var queueResponse = await client.GetAsync("/api/v1/work-items?requiresReview=true&pageSize=10");
         using var queue = JsonDocument.Parse(await queueResponse.Content.ReadAsStringAsync());
@@ -154,6 +156,114 @@ public sealed class GmailIntegrationEndpointsTests(PostgresApiFixture fixture)
         using var history = JsonDocument.Parse(await historyResponse.Content.ReadAsStringAsync());
         Assert.Contains(history.RootElement.GetProperty("entries").EnumerateArray(),
             entry => entry.GetProperty("action").GetString() == "GmailDraftExportSucceeded");
+
+        var outlookRequest = new
+        {
+            expectedVersion = 3,
+            revision = 1,
+            destinationMailboxId = PostgresApiFixture.GmailTestMailboxId,
+            recipientEmail = "sender@example.test",
+            provider = "Outlook",
+        };
+        using var outlookExport = await client.PostAsJsonAsync(exportsPath, outlookRequest);
+        Assert.Equal(HttpStatusCode.Created, outlookExport.StatusCode);
+        using var outlookExportJson = JsonDocument.Parse(await outlookExport.Content.ReadAsStringAsync());
+        var outlookExportId = outlookExportJson.RootElement.GetProperty("id").GetGuid();
+        Assert.Equal("Outlook", outlookExportJson.RootElement.GetProperty("provider").GetString());
+        Assert.Null(outlookExportJson.RootElement.GetProperty("externalDraftId").GetString());
+        using var outlookDuplicate = await client.PostAsJsonAsync(exportsPath, outlookRequest);
+        Assert.Equal(HttpStatusCode.OK, outlookDuplicate.StatusCode);
+        Assert.Equal(outlookExportId, (await outlookDuplicate.Content.ReadFromJsonAsync<ExportResponse>())!.Id);
+
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", PostgresApiFixture.GmailDraftExportTestToken);
+        using var wrongProviderClaim = await client.PostAsync("/api/v1/integrations/gmail/draft-exports/claim", null);
+        using (var wrongProviderClaimJson = JsonDocument.Parse(await wrongProviderClaim.Content.ReadAsStringAsync()))
+            Assert.Null(wrongProviderClaimJson.RootElement.GetProperty("claim").GetString());
+
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", PostgresApiFixture.OutlookDraftExportTestToken);
+        using var outlookClaimResponse = await client.PostAsync("/api/v1/integrations/outlook/draft-exports/claim", null);
+        Assert.Equal(HttpStatusCode.OK, outlookClaimResponse.StatusCode);
+        using var outlookClaimJson = JsonDocument.Parse(await outlookClaimResponse.Content.ReadAsStringAsync());
+        var outlookClaim = outlookClaimJson.RootElement.GetProperty("claim");
+        Assert.Equal(outlookExportId, outlookClaim.GetProperty("exportId").GetGuid());
+        Assert.Equal("Outlook", outlookClaim.GetProperty("provider").GetString());
+        var outlookAttemptId = outlookClaim.GetProperty("attemptId").GetGuid();
+
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", PostgresApiFixture.GmailDraftExportTestToken);
+        using var crossProviderCallback = await client.PostAsJsonAsync(
+            $"/api/v1/integrations/gmail/draft-exports/{outlookExportId:D}/complete",
+            new { attemptId = outlookAttemptId, gmailDraftId = "wrong-provider-id" });
+        Assert.Equal(HttpStatusCode.Conflict, crossProviderCallback.StatusCode);
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", PostgresApiFixture.OutlookDraftExportTestToken);
+        var outlookCallback = new { attemptId = outlookAttemptId, externalDraftId = "synthetic-outlook-draft-001" };
+        var outlookCallbackPath = $"/api/v1/integrations/outlook/draft-exports/{outlookExportId:D}/complete";
+        using var outlookCompleted = await client.PostAsJsonAsync(outlookCallbackPath, outlookCallback);
+        Assert.Equal(HttpStatusCode.OK, outlookCompleted.StatusCode);
+        using var outlookDuplicateCallback = await client.PostAsJsonAsync(outlookCallbackPath, outlookCallback);
+        Assert.Equal(HttpStatusCode.OK, outlookDuplicateCallback.StatusCode);
+
+        client.DefaultRequestHeaders.Authorization = null;
+        using var allExportsResponse = await client.GetAsync(exportsPath);
+        using var allExports = JsonDocument.Parse(await allExportsResponse.Content.ReadAsStringAsync());
+        Assert.Contains(allExports.RootElement.GetProperty("exports").EnumerateArray(), export =>
+            export.GetProperty("id").GetGuid() == outlookExportId &&
+            export.GetProperty("provider").GetString() == "Outlook" &&
+            export.GetProperty("externalDraftId").GetString() == "synthetic-outlook-draft-001" &&
+            export.GetProperty("gmailDraftId").ValueKind == JsonValueKind.Null);
+        using var finalHistoryResponse = await client.GetAsync($"/api/v1/work-items/{workItemId:D}/history");
+        using var finalHistory = JsonDocument.Parse(await finalHistoryResponse.Content.ReadAsStringAsync());
+        Assert.Contains(finalHistory.RootElement.GetProperty("entries").EnumerateArray(),
+            entry => entry.GetProperty("action").GetString() == "OutlookDraftExportSucceeded");
+    }
+
+    [Fact]
+    public async Task Outlook_message_identity_is_idempotent_and_distinct_from_Gmail_with_metadata_preserved()
+    {
+        await fixture.ResetAsync();
+        var (host, client) = fixture.CreateProcessingHost(new FakeEmailAnalysisProvider());
+        using var hostLifetime = host;
+        using var clientLifetime = client;
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", PostgresApiFixture.OutlookIngestionTestToken);
+
+        var outlookMessage = new
+        {
+            graphMessageId = "same-provider-id",
+            internetMessageId = "<outlook-123@example.test>",
+            conversationId = "same-conversation",
+            senderEmail = "sender@example.test",
+            senderName = "Synthetic sender",
+            recipientEmails = new[] { "inbox@example.test", "copy@example.test" },
+            subject = "Synthetic Outlook message",
+            bodyText = "Synthetic body.",
+            receivedAt = DateTimeOffset.UtcNow,
+            attachments = Array.Empty<object>(),
+        };
+        using var accepted = await client.PostAsJsonAsync("/api/v1/integrations/outlook/messages", outlookMessage);
+        Assert.Equal(HttpStatusCode.Accepted, accepted.StatusCode);
+        var outlookId = (await accepted.Content.ReadFromJsonAsync<ReceivedMessage>())!.Id;
+        using var replay = await client.PostAsJsonAsync("/api/v1/integrations/outlook/messages", outlookMessage);
+        Assert.Equal(HttpStatusCode.OK, replay.StatusCode);
+        Assert.Equal(outlookId, (await replay.Content.ReadFromJsonAsync<ReceivedMessage>())!.Id);
+
+        using var separateMessageInConversation = await client.PostAsJsonAsync(
+            "/api/v1/integrations/outlook/messages", outlookMessage with { graphMessageId = "different-graph-id" });
+        Assert.Equal(HttpStatusCode.Accepted, separateMessageInConversation.StatusCode);
+
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", PostgresApiFixture.GmailIngestionTestToken);
+        using var sameIdFromGmail = await client.PostAsJsonAsync("/api/v1/integrations/gmail/messages", new GmailMessageRequest(
+            "same-provider-id", "same-conversation", "sender@example.test", "Synthetic sender", "Synthetic Gmail message",
+            "Synthetic body.", outlookMessage.receivedAt));
+        Assert.Equal(HttpStatusCode.Accepted, sameIdFromGmail.StatusCode);
+        var gmailId = (await sameIdFromGmail.Content.ReadFromJsonAsync<ReceivedMessage>())!.Id;
+        Assert.NotEqual(outlookId, gmailId);
+
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", "test-token-for-service-authentication-0123456789abcdef");
+        using var details = await client.GetAsync($"/api/v1/messages/{outlookId:D}");
+        using var detailsJson = JsonDocument.Parse(await details.Content.ReadAsStringAsync());
+        Assert.Equal("outlook-test", detailsJson.RootElement.GetProperty("source").GetString());
+        Assert.Equal("<outlook-123@example.test>", detailsJson.RootElement.GetProperty("externalInternetMessageId").GetString());
+        Assert.Equal(new[] { "inbox@example.test", "copy@example.test" },
+            detailsJson.RootElement.GetProperty("externalRecipientEmails").EnumerateArray().Select(item => item.GetString()).ToArray());
     }
 
     private static async Task LoginAsync(HttpClient client)

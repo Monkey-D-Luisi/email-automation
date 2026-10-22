@@ -1,0 +1,33 @@
+{
+  "id": "AAMkAGI2-test-message-001",
+  "internetMessageId": "<synthetic-outlook-001@example.test>",
+  "conversationId": "synthetic-outlook-conversation-001",
+  "receivedDateTime": "2026-10-22T08:15:00Z",
+  "subject": "Synthetic Outlook request",
+  "from": {
+    "emailAddress": {
+      "name": "Synthetic Sender",
+      "address": "alex@example.test"
+    }
+  },
+  "toRecipients": [
+    { "emailAddress": { "name": "Test Inbox", "address": "inbox@example.test" } }
+  ],
+  "ccRecipients": [
+    { "emailAddress": { "name": "Synthetic Copy", "address": "copy@example.test" } }
+  ],
+  "body": {
+    "contentType": "text",
+    "content": "Please review synthetic invoice INV-2030."
+  },
+  "hasAttachments": true,
+  "attachments": [
+    {
+      "id": "synthetic-attachment-001",
+      "name": "invoice.pdf",
+      "contentType": "application/pdf",
+      "size": 1234,
+      "isInline": false
+    }
+  ]
+}

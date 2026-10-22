@@ -1,4 +1,5 @@
 using System.Security.Cryptography;
+using System.Net.Mail;
 using System.Text.Json;
 
 namespace SmartInbox.Domain.Messages;
@@ -12,6 +13,8 @@ public sealed class InboundMessage
     public string MailboxId { get; private set; } = string.Empty;
     public string ExternalMessageId { get; private set; } = string.Empty;
     public string? ExternalThreadId { get; private set; }
+    public string? ExternalInternetMessageId { get; private set; }
+    public IReadOnlyList<string> ExternalRecipientEmails { get; private set; } = [];
     public string? SenderEmail { get; private set; }
     public string? SenderName { get; private set; }
     public string Subject { get; private set; } = string.Empty;
@@ -42,7 +45,9 @@ public sealed class InboundMessage
         string bodyText,
         DateTimeOffset receivedAt,
         DateTimeOffset importedAt,
-        IEnumerable<AttachmentMetadata>? attachments = null)
+        IEnumerable<AttachmentMetadata>? attachments = null,
+        string? externalInternetMessageId = null,
+        IEnumerable<string>? externalRecipientEmails = null)
     {
         ValidateRequired(source, InboundMessageLimits.Source, nameof(source));
         ValidateRequired(mailboxId, InboundMessageLimits.MailboxId, nameof(mailboxId));
@@ -56,6 +61,8 @@ public sealed class InboundMessage
         var normalizedSenderEmail = NormalizeOptional(senderEmail);
         var normalizedSenderName = NormalizeOptional(senderName);
         var normalizedThreadId = string.IsNullOrEmpty(externalThreadId) ? null : externalThreadId;
+        var normalizedInternetMessageId = NormalizeInternetMessageId(externalInternetMessageId);
+        var normalizedRecipients = NormalizeRecipients(externalRecipientEmails);
         var normalizedAttachments = NormalizeAttachments(attachments);
         var receivedAtUtc = receivedAt.ToUniversalTime();
         var importedAtUtc = importedAt.ToUniversalTime();
@@ -67,6 +74,8 @@ public sealed class InboundMessage
             MailboxId = mailboxId,
             ExternalMessageId = externalMessageId,
             ExternalThreadId = normalizedThreadId,
+            ExternalInternetMessageId = normalizedInternetMessageId,
+            ExternalRecipientEmails = normalizedRecipients,
             SenderEmail = normalizedSenderEmail,
             SenderName = normalizedSenderName,
             Subject = subject,
@@ -179,7 +188,9 @@ public sealed class InboundMessage
         ProcessingFailureKind? failureKind = null,
         string? failureMessage = null,
         bool processingRetryable = false,
-        DateTimeOffset? nextAttemptAt = null)
+        DateTimeOffset? nextAttemptAt = null,
+        string? externalInternetMessageId = null,
+        IEnumerable<string>? externalRecipientEmails = null)
     {
         if (id == Guid.Empty)
             throw new ArgumentException("A persisted message ID is required.", nameof(id));
@@ -206,7 +217,7 @@ public sealed class InboundMessage
 
         var message = Receive(
             source, mailboxId, externalMessageId, externalThreadId, senderEmail, senderName,
-            subject, bodyText, receivedAt, importedAt, attachments);
+            subject, bodyText, receivedAt, importedAt, attachments, externalInternetMessageId, externalRecipientEmails);
         message.Id = id;
         message.Status = status;
         message.ContentFingerprint = contentFingerprint.ToLowerInvariant();
@@ -272,6 +283,29 @@ public sealed class InboundMessage
     {
         var normalized = value?.Trim();
         return string.IsNullOrEmpty(normalized) ? null : normalized;
+    }
+
+    private static string? NormalizeInternetMessageId(string? value)
+    {
+        var normalized = NormalizeOptional(value);
+        if (normalized is not null && (normalized.Length > InboundMessageLimits.ExternalId || normalized.Contains('\r') || normalized.Contains('\n')))
+            throw new ArgumentException("The RFC internet message ID is invalid.", nameof(value));
+        return normalized;
+    }
+
+    private static IReadOnlyList<string> NormalizeRecipients(IEnumerable<string>? recipients)
+    {
+        var values = recipients?.ToArray() ?? [];
+        if (values.Length > 100)
+            throw new ArgumentException("The recipient metadata is invalid.", nameof(recipients));
+        var normalized = new List<string>(values.Length);
+        foreach (var address in values)
+        {
+            if (!MailAddress.TryCreate(address, out var parsed) || parsed is null || parsed.Address.Length > InboundMessageLimits.SenderEmail)
+                throw new ArgumentException("The recipient metadata is invalid.", nameof(recipients));
+            normalized.Add(parsed.Address);
+        }
+        return Array.AsReadOnly(normalized.Distinct(StringComparer.OrdinalIgnoreCase).ToArray());
     }
 
     private static void ValidateRequired(string? value, int maxLength, string parameterName, bool allowEmpty = false)

@@ -23,6 +23,8 @@ internal sealed class InboundMessageRecordConfiguration : IEntityTypeConfigurati
         builder.Property(message => message.MailboxId).HasMaxLength(256).IsRequired();
         builder.Property(message => message.ExternalMessageId).HasMaxLength(512).IsRequired();
         builder.Property(message => message.ExternalThreadId).HasMaxLength(512);
+        builder.Property(message => message.ExternalInternetMessageId).HasMaxLength(512);
+        builder.Property(message => message.ExternalRecipientEmailsJson).HasColumnType("jsonb").HasDefaultValueSql("'[]'::jsonb").IsRequired();
         builder.Property(message => message.SenderEmail).HasMaxLength(320);
         builder.Property(message => message.SenderName).HasMaxLength(256);
         builder.Property(message => message.Subject).HasMaxLength(998).IsRequired();
