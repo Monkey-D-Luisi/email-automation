@@ -11,14 +11,16 @@ const [ingestion, exportWorkflow, fixture, mapperSource] = await Promise.all([
   readFile(new URL("scripts/gmail-message-mapper.js", integrationRoot), "utf8"),
 ]);
 
+const normalizeSourceNewlines = source => source.replace(/\r\n?/g, "\n").trim();
+
 function executeSyntheticFixture() {
   const source = ingestion.nodes.find(node => node.name === "Synthetic Parsed Gmail Fixture").parameters.jsCode;
   return new Function("$input", source)({ all: () => [] });
 }
 
-function executeMapper(messages) {
+function executeMapper(messages, sourceForParity = mapperSource) {
   const mapper = ingestion.nodes.find(node => node.name === "Map and Validate Gmail Message").parameters.jsCode;
-  assert.equal(mapper.trim(), mapperSource.trim());
+  assert.equal(normalizeSourceNewlines(mapper), normalizeSourceNewlines(sourceForParity));
   return new Function("$input", mapper)({ all: () => messages.map(json => ({ json })) });
 }
 
@@ -94,6 +96,14 @@ test("the mapper uses Gmail provider identity, prefers parsed plain text, and ke
   const [missingSender] = executeMapper([{ ...fixture, from: undefined, headers: {} }]);
   assert.equal(missingSender.json.valid, true);
   assert.equal(missingSender.json.payload.senderEmail, null);
+});
+
+test("mapper source parity accepts CRLF and LF while detecting code changes", () => {
+  const mapper = ingestion.nodes.find(node => node.name === "Map and Validate Gmail Message").parameters.jsCode;
+  const crlfMapper = mapper.replace(/\n/g, "\r\n");
+  assert.doesNotThrow(() => executeMapper([], crlfMapper));
+  const changedMapper = crlfMapper.replace("const correlationId =", "const changedCorrelationId =");
+  assert.throws(() => executeMapper([], changedMapper), error => error.code === "ERR_ASSERTION");
 });
 
 test("three concurrent message identities keep accepted, duplicate, and retry outcomes paired through bounded retries", () => {

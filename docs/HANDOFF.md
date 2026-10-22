@@ -75,3 +75,11 @@ PostgreSQL integration tests require `SMARTINBOX_TEST_CONNECTION_STRING` to poin
 - No live Gmail OAuth, live message polling, Gmail draft creation, email send, OpenAI call, hosted CI, push, or deployment was performed. The local run verifies workflow execution and API/database behavior, but not Google OAuth/account identity or live provider behavior.
 
 This remains a single-reviewer localhost demo using synthetic data. There is no retention/deletion scheduler, multi-user identity administration, rate limiting, or production TLS deployment. Email bodies and audit history persist in PostgreSQL until the operator removes them. Do not use real customer data or expose the service publicly.
+
+### Cross-platform verification follow-up — 2026-10-22
+
+- Ran the complete frontend and workflow test command on Linux with Node 22.16.0 in `node:22.16.0-bookworm-slim`: **16/16 passed**. The mapper parity regression accepts CRLF/LF equivalence and still detects a changed mapper token.
+- Ran the PostgreSQL-backed .NET solution suite against local PostgreSQL 17 in `smartinbox_test`: **114/115 passed** on both full-suite attempts. `WorkItemPostgresTests.Gmail_export_is_idempotent_and_only_one_postgres_worker_can_claim_it` expected a duplicate callback but received `Stale` at line 236. The same test passed **1/1** when run alone. No .NET source or database files changed in this follow-up.
+- Release solution build passed with 0 warnings and 0 errors. The Next.js production build passed.
+- EF reported no pending model changes. The NuGet audit reported no vulnerable packages, and `npm audit --audit-level=moderate` reported 0 vulnerabilities.
+- No Gmail OAuth, live provider call, external draft creation, email send, push, or deployment was performed.
