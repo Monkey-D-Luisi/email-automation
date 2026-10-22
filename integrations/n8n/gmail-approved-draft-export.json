@@ -32,7 +32,7 @@
       ],
       "parameters": {
         "mode": "runOnceForAllItems",
-        "jsCode": "const mode = $env.SMARTINBOX_GMAIL_MODE || \"disabled\";\nif (mode === \"disabled\") return [];\nif (mode !== \"fake\" && mode !== \"live\") throw new Error(\"Set SMARTINBOX_GMAIL_MODE to disabled, fake, or live.\");\nreturn [{ json: { mode } }];"
+        "jsCode": "const mode = $env.SMARTINBOX_GMAIL_MODE || \"disabled\";\nif (mode === \"disabled\") return [];\nif (mode !== \"fake\" && mode !== \"fake-ambiguous\" && mode !== \"live\") throw new Error(\"Set SMARTINBOX_GMAIL_MODE to disabled, fake, fake-ambiguous, or live.\");\nreturn [{ json: { mode } }];"
       }
     },
     {
@@ -47,15 +47,7 @@
       "parameters": {
         "method": "POST",
         "url": "={{$env.SMARTINBOX_API_ORIGIN + '/api/v1/integrations/gmail/draft-exports/claim'}}",
-        "sendHeaders": true,
-        "headerParameters": {
-          "parameters": [
-            {
-              "name": "Authorization",
-              "value": "={{'Bearer ' + $env.SMARTINBOX_GMAIL_DRAFT_EXPORT_TOKEN}}"
-            }
-          ]
-        },
+        "sendHeaders": false,
         "sendBody": false,
         "specifyBody": "json",
         "jsonBody": "={{ { } }}",
@@ -67,7 +59,9 @@
               "neverError": true
             }
           }
-        }
+        },
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpBearerAuth"
       },
       "onError": "continueErrorOutput"
     },
@@ -124,7 +118,7 @@
           "conditions": [
             {
               "id": "is-fake-mode-condition",
-              "leftValue": "={{$env.SMARTINBOX_GMAIL_MODE === 'fake'}}",
+              "leftValue": "={{$env.SMARTINBOX_GMAIL_MODE === 'fake' || $env.SMARTINBOX_GMAIL_MODE === 'fake-ambiguous'}}",
               "rightValue": true,
               "operator": {
                 "type": "boolean",
@@ -246,15 +240,7 @@
       "parameters": {
         "method": "POST",
         "url": "={{$env.SMARTINBOX_API_ORIGIN + '/api/v1/integrations/gmail/draft-exports/' + $json.exportId + '/complete'}}",
-        "sendHeaders": true,
-        "headerParameters": {
-          "parameters": [
-            {
-              "name": "Authorization",
-              "value": "={{'Bearer ' + $env.SMARTINBOX_GMAIL_DRAFT_EXPORT_TOKEN}}"
-            }
-          ]
-        },
+        "sendHeaders": false,
         "sendBody": true,
         "specifyBody": "json",
         "jsonBody": "={{ { attemptId: $json.attemptId, gmailDraftId: $json.gmailDraftId } }}",
@@ -266,7 +252,9 @@
               "neverError": true
             }
           }
-        }
+        },
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpBearerAuth"
       },
       "retryOnFail": true,
       "maxTries": 3,
@@ -313,15 +301,7 @@
       "parameters": {
         "method": "POST",
         "url": "={{$env.SMARTINBOX_API_ORIGIN + '/api/v1/integrations/gmail/draft-exports/' + $json.exportId + '/fail'}}",
-        "sendHeaders": true,
-        "headerParameters": {
-          "parameters": [
-            {
-              "name": "Authorization",
-              "value": "={{'Bearer ' + $env.SMARTINBOX_GMAIL_DRAFT_EXPORT_TOKEN}}"
-            }
-          ]
-        },
+        "sendHeaders": false,
         "sendBody": true,
         "specifyBody": "json",
         "jsonBody": "={{ { attemptId: $json.attemptId, failureKind: $json.failureKind } }}",
@@ -333,7 +313,9 @@
               "neverError": true
             }
           }
-        }
+        },
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpBearerAuth"
       },
       "retryOnFail": true,
       "maxTries": 3,
@@ -380,6 +362,50 @@
       "parameters": {
         "mode": "runOnceForAllItems",
         "jsCode": "const response = $input.first().json;\nconst status = Number(response.statusCode ?? 0);\nreturn [{ json: { outcome: status === 200 ? \"no-pending-export\" : \"claim-request-failed\", httpStatus: status || null } }];"
+      }
+    },
+    {
+      "id": "manual-synthetic-gmail-export",
+      "name": "Manual Synthetic Gmail Export Event",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        240,
+        480
+      ],
+      "parameters": {}
+    },
+    {
+      "id": "fake-ambiguous-outcome",
+      "name": "Simulate Ambiguous Fake Outcome?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1360,
+        300
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "is-fake-ambiguous",
+              "leftValue": "={{$env.SMARTINBOX_GMAIL_MODE === 'fake-ambiguous'}}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        }
       }
     }
   ],
@@ -446,7 +472,7 @@
       "main": [
         [
           {
-            "node": "Create Synthetic Gmail Draft ID",
+            "node": "Simulate Ambiguous Fake Outcome?",
             "type": "main",
             "index": 0
           }
@@ -583,6 +609,35 @@
     "Sanitize Integration Request Error": {
       "main": [
         []
+      ]
+    },
+    "Manual Synthetic Gmail Export Event": {
+      "main": [
+        [
+          {
+            "node": "Require Explicit Fake or Live Mode",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Simulate Ambiguous Fake Outcome?": {
+      "main": [
+        [
+          {
+            "node": "Prepare Ambiguous Provider Outcome",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Create Synthetic Gmail Draft ID",
+            "type": "main",
+            "index": 0
+          }
+        ]
       ]
     }
   },

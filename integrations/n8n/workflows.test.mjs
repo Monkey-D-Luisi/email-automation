@@ -11,10 +11,24 @@ const [ingestion, exportWorkflow, fixture, mapperSource] = await Promise.all([
   readFile(new URL("scripts/gmail-message-mapper.js", integrationRoot), "utf8"),
 ]);
 
+function executeSyntheticFixture() {
+  const source = ingestion.nodes.find(node => node.name === "Synthetic Parsed Gmail Fixture").parameters.jsCode;
+  return new Function("$input", source)({ all: () => [] });
+}
+
 function executeMapper(messages) {
   const mapper = ingestion.nodes.find(node => node.name === "Map and Validate Gmail Message").parameters.jsCode;
   assert.equal(mapper.trim(), mapperSource.trim());
   return new Function("$input", mapper)({ all: () => messages.map(json => ({ json })) });
+}
+
+function executeForEachItem(workflow, nodeName, items, linkedItems = {}) {
+  const node = workflow.nodes.find(candidate => candidate.name === nodeName);
+  assert.equal(node.parameters.mode, "runOnceForEachItem");
+  return items.map((item, index) => new Function("$input", "$", node.parameters.jsCode)(
+    { item: { json: item } },
+    name => ({ item: { json: linkedItems[name][index] } })
+  ));
 }
 
 test("both n8n exports are valid inactive workflows without credentials or machine-specific hosts", () => {
@@ -69,9 +83,82 @@ test("the mapper uses Gmail provider identity, prefers parsed plain text, and ke
   assert.equal(mapped.json.payload.attachments[0].externalAttachmentId, "synthetic-attachment-001");
   assert.equal(mapped.json.correlationId, `gmail-${fixture.id}`);
 
+  const prefix = "x".repeat(120);
+  const [longIdA, longIdB] = executeMapper([
+    { ...fixture, id: `${prefix}-a` },
+    { ...fixture, id: `${prefix}-b` },
+  ]);
+  assert.notEqual(longIdA.json.correlationId, longIdB.json.correlationId);
+  assert.equal(longIdA.json.correlationId, `gmail-${prefix}-a`);
+
   const [missingSender] = executeMapper([{ ...fixture, from: undefined, headers: {} }]);
   assert.equal(missingSender.json.valid, true);
   assert.equal(missingSender.json.payload.senderEmail, null);
+});
+
+test("three concurrent message identities keep accepted, duplicate, and retry outcomes paired through bounded retries", () => {
+  const synthetic = executeSyntheticFixture();
+  assert.equal(synthetic.length, 3);
+  const mapped = executeMapper(synthetic.map(item => item.json)).map(item => item.json);
+  const requests = executeForEachItem(ingestion, "Build Gmail API Request", mapped).map(item => item.json);
+  assert.equal(new Set(requests.map(request => request.providerMessageId)).size, 3);
+  assert.equal(new Set(requests.map(request => request.correlationId)).size, 3);
+
+  const initial = executeForEachItem(ingestion, "Classify Gmail API Response", [
+    { statusCode: 202 },
+    { statusCode: 200 },
+    { statusCode: 503 },
+  ], { "Build Gmail API Request": requests }).map(item => item.json);
+  assert.deepEqual(initial.map(item => item.outcome), ["accepted", "duplicate", "retrying"]);
+  assert.deepEqual(initial.map(item => item.providerMessageId), requests.map(item => item.providerMessageId));
+  assert.deepEqual(initial.map(item => item.correlationId), requests.map(item => item.correlationId));
+
+  const retrying = initial.filter(item => item.retry);
+  const retryRequests = executeForEachItem(ingestion, "Prepare Bounded Retry", retrying).map(item => item.json);
+  assert.equal(retryRequests.length, 1);
+  assert.equal(retryRequests[0].attempt, 2);
+  const retried = executeForEachItem(ingestion, "Classify Retry Response", [{ statusCode: 202 }], {
+    "Prepare Bounded Retry": retryRequests,
+  })[0].json;
+  assert.equal(retried.outcome, "accepted");
+  assert.equal(retried.attemptCount, 2);
+  assert.equal(retried.providerMessageId, requests[2].providerMessageId);
+  assert.equal(retried.correlationId, requests[2].correlationId);
+
+  const finalAttempt = { ...requests[0], attempt: 3 };
+  const networkFailure = executeForEachItem(ingestion, "Classify Ingestion Network Error", [{}], {
+    "Build Gmail API Request": [finalAttempt],
+  })[0].json;
+  assert.equal(networkFailure.outcome, "retry-exhausted");
+  assert.equal(networkFailure.retry, false);
+  assert.equal(networkFailure.providerMessageId, finalAttempt.providerMessageId);
+  assert.equal(networkFailure.correlationId, finalAttempt.correlationId);
+
+  const retryAttempt = { ...requests[0], attempt: 2 };
+  const secondRetry = executeForEachItem(ingestion, "Classify Retry Response", [{ statusCode: 503 }], {
+    "Prepare Bounded Retry": [retryAttempt],
+  })[0].json;
+  assert.equal(secondRetry.outcome, "retrying");
+  const thirdAttempt = executeForEachItem(ingestion, "Prepare Bounded Retry", [secondRetry])[0].json;
+  assert.equal(thirdAttempt.attempt, 3);
+  const retryExhaustion = executeForEachItem(ingestion, "Classify Retry Response", [{ statusCode: 503 }], {
+    "Prepare Bounded Retry": [thirdAttempt],
+  })[0].json;
+  assert.equal(retryExhaustion.outcome, "retry-exhausted");
+  assert.equal(retryExhaustion.retry, false);
+  assert.equal(retryExhaustion.correlationId, retryAttempt.correlationId);
+
+  const retryNetwork = executeForEachItem(ingestion, "Classify Retry Network Error", [{}], {
+    "Prepare Bounded Retry": [retryAttempt],
+  })[0].json;
+  assert.equal(retryNetwork.outcome, "retrying-network-error");
+  assert.equal(retryNetwork.attempt, 2);
+  const thirdNetworkAttempt = executeForEachItem(ingestion, "Prepare Bounded Retry", [retryNetwork])[0].json;
+  const retryNetworkExhaustion = executeForEachItem(ingestion, "Classify Retry Network Error", [{}], {
+    "Prepare Bounded Retry": [thirdNetworkAttempt],
+  })[0].json;
+  assert.equal(retryNetworkExhaustion.outcome, "retry-exhausted");
+  assert.equal(retryNetworkExhaustion.correlationId, retryAttempt.correlationId);
 });
 
 test("HTML-only content is converted to inert text and common entities are decoded", () => {
@@ -122,7 +209,28 @@ test("draft export is disabled by default and the only Gmail mutation node creat
   assert.equal(gmailNodes[0].parameters.options.sendTo, "={{$json.body.claim.recipientEmail}}");
   assert.equal(gmailNodes[0].retryOnFail, undefined);
   assert.match(exportWorkflow.nodes.find(node => node.name === "Require Explicit Fake or Live Mode").parameters.jsCode, /mode === "disabled"/);
+  assert.equal(exportWorkflow.nodes.some(node => node.name === "Manual Synthetic Gmail Export Event"), true);
+  assert.equal(exportWorkflow.connections["Simulate Ambiguous Fake Outcome?"].main[0][0].node, "Prepare Ambiguous Provider Outcome");
   assert.match(exportWorkflow.nodes.find(node => node.name === "Prepare Ambiguous Provider Outcome").parameters.jsCode, /ProviderOutcomeUnknown/);
   assert.match(exportWorkflow.nodes.find(node => node.name === "Report Claim Status Safely").parameters.jsCode, /claim-request-failed/);
   assert.equal(exportWorkflow.connections["Export Claim Available?"].main[1][0].node, "Report Claim Status Safely");
+});
+
+test("Smart Inbox service tokens use n8n-managed Bearer Auth credentials, not container environment variables", () => {
+  const requests = [
+    [ingestion, "Gmail API Ingestion"],
+    [ingestion, "Retry Gmail API Ingestion"],
+    [exportWorkflow, "Claim Gmail Export"],
+    [exportWorkflow, "Record Gmail Draft ID"],
+    [exportWorkflow, "Record Provider Outcome Unknown"],
+  ];
+  for (const [workflow, name] of requests) {
+    const node = workflow.nodes.find(candidate => candidate.name === name);
+    assert.equal(node.parameters.authentication, "genericCredentialType");
+    assert.equal(node.parameters.genericAuthType, "httpBearerAuth");
+    assert.equal(node.credentials, undefined);
+    assert.equal(JSON.stringify(node.parameters).includes("Authorization"), false);
+  }
+  assert.equal(JSON.stringify([ingestion, exportWorkflow]).includes("SMARTINBOX_GMAIL_INGESTION_TOKEN"), false);
+  assert.equal(JSON.stringify([ingestion, exportWorkflow]).includes("SMARTINBOX_GMAIL_DRAFT_EXPORT_TOKEN"), false);
 });

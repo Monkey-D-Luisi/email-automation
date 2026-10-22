@@ -53,12 +53,14 @@ Follow [README.md](../README.md) for PostgreSQL, User Secrets, migration applica
 
 PostgreSQL integration tests require `SMARTINBOX_TEST_CONNECTION_STRING` to point to a localhost database ending in `_test`. Each fixture creates and drops an isolated schema. The API acceptance test substitutes a fake classifier and uses the same local database fixture.
 
-## Phase 4 Gmail and n8n — 2026-10-21
+## Phase 4 Gmail and n8n — 2026-10-22
 
 - Added a single-configured-mailbox Gmail ingestion endpoint protected by its own service token. The API, not n8n payload data, supplies the source and mailbox identity. Existing PostgreSQL message identity and replay semantics remain authoritative.
 - Added a PostgreSQL-backed export intent for the exact current approved draft revision, recipient, and configured mailbox. Claims are row-locked and leased; callbacks are attempt-scoped; duplicate requests/callbacks are safe. An expired or uncertain Gmail attempt requires manual reconciliation. No automatic retry follows a possibly successful Gmail create call.
 - Added a separate reviewer action and UI status/reconciliation controls. A reviewer explicitly confirms the existing recipient and requests an unsent external Gmail draft. The action is hidden when disabled or ineligible.
 - Added inactive, credential-free n8n workflow exports and an optional `n8nio/n8n:2.44.5` Compose service. The fake provider always returns an ambiguous `Unknown` classification that requires human review. Fake Gmail export records only a synthetic draft ID.
+- Fixed ingestion batch handling so every Gmail message keeps its own provider ID and correlation through API responses and bounded HTTP/network retries. Three-item regression coverage now mixes accepted, duplicate, and retryable outcomes; attempt counts remain bounded at three.
+- Moved Smart Inbox service tokens from n8n process environment variables to separately managed n8n **Bearer Auth** credentials. The workflow exports contain credential types but no credential IDs or values. The guide documents n8n encryption-key, volume backup, workflow-editor, and environment-access trade-offs.
 - A configured mailbox ID is compared to the Gmail OAuth account by the operator during setup; the MVP does not verify OAuth account identity at runtime. `gmail.compose` itself allows sending, although the workflow contains only Gmail Draft/Create. Gmail reply threading is unsupported.
 
 ### Verification
@@ -66,8 +68,10 @@ PostgreSQL integration tests require `SMARTINBOX_TEST_CONNECTION_STRING` to poin
 - Release build: passed with zero warnings and errors.
 - PostgreSQL-backed `dotnet test SmartInbox.sln -c Release --no-restore`: 115/115 passed (Domain 17, Application 51, Infrastructure 34, API 13). This includes export uniqueness, concurrent claims, duplicate callbacks, expiry/manual reconciliation, pending-export cancellation on edit, and Phase 3-to-Phase 4 migration replay.
 - `dotnet ef migrations has-pending-model-changes`: passed. NuGet package audit reported no known vulnerable packages.
-- Frontend and n8n fixture tests: 13/13 passed. Next.js production build passed; `npm audit` reported zero vulnerabilities.
-- The n8n 2.44.5 CLI imported both workflow JSON files successfully and exported them back as inactive. A Docker Compose run container reached the local API through `host.docker.internal`; `/health` returned HTTP 200. The temporary API process was stopped after this read-only probe.
-- Live Gmail OAuth, message polling, Gmail draft creation, and OpenAI requests were not performed. The n8n CLI importer was exercised; its `execute --id` command cannot start these trigger-based workflows, so manual workflow execution in the n8n editor remains to be done.
+- Frontend and n8n fixture tests: 15/15 passed. Next.js production build passed; `npm audit` reported zero vulnerabilities.
+- Imported both workflow exports into actual local `n8nio/n8n:2.44.5` and executed the manual synthetic paths with the n8n CLI. For this isolated CLI run, a temporary import reordered only the trigger-node array so `execute --id` selected the manual synthetic trigger; the checked-in workflow graph and node parameters were unchanged. Both workflow executions completed successfully.
+- Ingestion ran against the Smart Inbox API and a unique schema in the local PostgreSQL 17 `smartinbox_test` database. The three independent synthetic messages produced API statuses `202` accepted, `200` duplicate, and `503` followed by `202` after the bounded retry. PostgreSQL showed three distinct processed inbound records and three separate `PendingReview` work items.
+- The approved-draft reviewer flow created an export intent, then the outbound workflow ran in `fake-ambiguous` mode. The API claim and failure callback completed; PostgreSQL showed `NeedsReconciliation`, `ProviderOutcomeUnknown`, attempt count 1, and a null Gmail draft ID. The ambiguous branch did not call Gmail.
+- No live Gmail OAuth, live message polling, Gmail draft creation, email send, OpenAI call, hosted CI, push, or deployment was performed. The local run verifies workflow execution and API/database behavior, but not Google OAuth/account identity or live provider behavior.
 
 This remains a single-reviewer localhost demo using synthetic data. There is no retention/deletion scheduler, multi-user identity administration, rate limiting, or production TLS deployment. Email bodies and audit history persist in PostgreSQL until the operator removes them. Do not use real customer data or expose the service publicly.

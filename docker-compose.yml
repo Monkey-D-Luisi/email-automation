@@ -15,8 +15,6 @@ services:
       N8N_BLOCK_ENV_ACCESS_IN_NODE: "false"
       SMARTINBOX_API_ORIGIN: ${SMARTINBOX_API_ORIGIN:-http://host.docker.internal:5168}
       SMARTINBOX_GMAIL_MODE: ${SMARTINBOX_GMAIL_MODE:-disabled}
-      SMARTINBOX_GMAIL_INGESTION_TOKEN: ${SMARTINBOX_GMAIL_INGESTION_TOKEN:-}
-      SMARTINBOX_GMAIL_DRAFT_EXPORT_TOKEN: ${SMARTINBOX_GMAIL_DRAFT_EXPORT_TOKEN:-}
     volumes:
       - smartinbox-n8n-data:/home/node/.n8n
       - ./integrations/n8n:/opt/smartinbox/workflows:ro

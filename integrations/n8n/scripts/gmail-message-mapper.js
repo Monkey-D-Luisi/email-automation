@@ -74,7 +74,7 @@ function mapMessage(message) {
   const threadId = typeof message.threadId === "string" && message.threadId.length <= 512
     ? message.threadId
     : null;
-  const correlationId = `gmail-${messageId}`.slice(0, 120);
+  const correlationId = `gmail-${messageId}`;
   return {
     json: {
       valid: true,
@@ -93,4 +93,4 @@ function mapMessage(message) {
   };
 }
 
-return incoming.map(item => mapMessage(item.json ?? {}));
+return incoming.map((item, index) => ({ ...mapMessage(item.json ?? {}), pairedItem: { item: index } }));

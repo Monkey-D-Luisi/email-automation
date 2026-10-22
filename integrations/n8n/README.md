@@ -1,13 +1,13 @@
 # Gmail and n8n integration
 
-This local integration uses two n8n workflows and the existing Smart Inbox API. The workflows are exported inactive and contain no credential references or mailbox addresses. n8n 2.44.5 is pinned in Compose. Use synthetic messages and a dedicated Gmail test account only.
+This local integration uses two n8n workflows and the existing Smart Inbox API. The workflows are exported inactive, contain no credential references or mailbox addresses, and require managed HTTP credentials to be assigned after import. n8n 2.44.5 is pinned in Compose. Use synthetic messages and a dedicated Gmail test account only.
 
 ## Boundaries and workflow mapping
 
 | Workflow node | Smart Inbox contract or effect |
 | --- | --- |
 | Gmail Trigger | Polls up to 10 full parsed messages per minute from `INBOX`; excludes sent, drafts, spam, and trash; does not alter read state or labels. |
-| Manual Synthetic Gmail Event | Sends the checked-in synthetic fixture through the same mapper and API as a Gmail event. |
+| Manual Synthetic Gmail Event | Sends three distinct synthetic messages through the same mapper and API as a Gmail event. |
 | Map and Validate Gmail Message | Uses Gmail provider `id` and `threadId`; prefers parsed plain text, safely strips HTML if needed, and emits bounded diagnostic reasons without logging message content. |
 | Gmail API Ingestion | `POST /api/v1/integrations/gmail/messages`; the API supplies configured `SourceId` and `MailboxId`. It returns `202` for accepted, `200` for identical replay, and `409` for a conflicting replay. |
 | Poll Pending Gmail Draft Exports | Runs every minute and calls `POST /api/v1/integrations/gmail/draft-exports/claim`. PostgreSQL owns eligibility, snapshot, uniqueness, and leases. |
@@ -41,16 +41,13 @@ The Compose service is optional and localhost-bound. It uses a separate `smartin
 
    The fake analyzer always returns an ambiguous, `Unknown` result that requires human review. It never sends a provider request and is unsuitable for classifying real messages. `EmailDrafting:Enabled` stays false.
 
-4. Put the two service tokens in the ignored local `.env` for the n8n container. This keeps them out of workflow exports and source control:
+4. Put only the non-secret API origin and fake mode in the ignored local `.env` for the n8n container:
 
    ```powershell
    $envLines = Get-Content -LiteralPath '.env' | Where-Object { $_ -notmatch '^(SMARTINBOX_API_ORIGIN|SMARTINBOX_GMAIL_MODE|SMARTINBOX_GMAIL_INGESTION_TOKEN|SMARTINBOX_GMAIL_DRAFT_EXPORT_TOKEN)=' }
    $envLines += "SMARTINBOX_API_ORIGIN=http://host.docker.internal:5168"
    $envLines += 'SMARTINBOX_GMAIL_MODE=fake'
-   $envLines += "SMARTINBOX_GMAIL_INGESTION_TOKEN=$ingestionToken"
-   $envLines += "SMARTINBOX_GMAIL_DRAFT_EXPORT_TOKEN=$draftExportToken"
    Set-Content -LiteralPath '.env' -Value $envLines
-   Remove-Variable ingestionToken, draftExportToken
    ```
 
 5. Start the API on the host so Docker can reach it. The temporary host binding is broader than loopback; keep it limited to this local session and apply the host firewall policy appropriate to your machine. The host filter must allow the Docker DNS name:
@@ -69,9 +66,19 @@ The Compose service is optional and localhost-bound. It uses a separate `smartin
 
    The container maps `host.docker.internal` to the Docker host gateway, and its `SMARTINBOX_API_ORIGIN` uses that name. The n8n editor port is bound to `127.0.0.1`; its generated encryption key and OAuth credentials live in the named volume. Back up that volume securely if the credentials must survive host replacement; never commit it.
 
-7. Import `gmail-ingestion.json` and `gmail-approved-draft-export.json` from `/opt/smartinbox/workflows` through the n8n editor. Both should remain inactive. Run the ingestion workflow manually from **Manual Synthetic Gmail Event**. It creates one synthetic inbound record. The fake analyzer classifies it as `Unknown` for reviewer inspection. Create, edit, and approve an internal draft, confirm the recipient in the review panel, and select **Create Gmail Draft**. Run the export workflow manually; `fake` mode records a synthetic Gmail draft ID through the normal completion callback. Replaying either request returns existing state rather than creating a second record.
+7. Import `gmail-ingestion.json` and `gmail-approved-draft-export.json` from `/opt/smartinbox/workflows` through the n8n editor. Both should remain inactive.
+
+8. In n8n, create two separate **Bearer Auth** credentials with the raw service-token values (do not include the `Bearer ` prefix). Assign the ingestion credential to **Gmail API Ingestion** and **Retry Gmail API Ingestion**. Assign the draft-export credential to **Claim Gmail Export**, **Record Gmail Draft ID**, and **Record Provider Outcome Unknown**. The workflow files intentionally contain no credential references or values. Run the ingestion workflow manually from **Manual Synthetic Gmail Event**. It submits three independent synthetic message identities; repeat runs exercise the API's duplicate response. The fake analyzer classifies messages as `Unknown` for reviewer inspection. Create, edit, and approve an internal draft, confirm the recipient in the review panel, and select **Create Gmail Draft**. Run the export workflow manually; `fake` mode records a synthetic Gmail draft ID through the normal completion callback. Set `SMARTINBOX_GMAIL_MODE=fake-ambiguous` only when deliberately validating the unknown-outcome path; it calls the normal API failure callback without contacting Gmail. Replaying requests returns existing state rather than creating a second record.
 
 To stop the temporary API listener, stop the `dotnet run` process. Stop n8n with `docker compose --profile integrations stop n8n`. The workflows remain inactive unless explicitly activated in n8n.
+
+## Service-token storage and n8n security
+
+The service tokens stay in .NET User Secrets on the API host and in n8n's managed **Bearer Auth** credentials. The workflow JSON does not contain tokens. n8n encrypts credential data in its database with `N8N_ENCRYPTION_KEY`; n8n generates a key on first launch unless an operator supplies one. Protect the n8n data volume and its backups, and store a custom encryption key separately from database backups. If the credential database and key are both exposed, the credentials can be decrypted.
+
+n8n-managed credentials keep service tokens out of workflow exports and process environment variables, but they do not prevent an authorized workflow editor from using a credential in an HTTP Request node. Restrict editor/admin access and keep the separate ingestion and draft-export tokens scoped to their matching API policies. Do not export decrypted credential data.
+
+The local Compose setup keeps `SMARTINBOX_API_ORIGIN` and `SMARTINBOX_GMAIL_MODE` in `.env` because the workflows use them in expressions. These values are not secrets. `N8N_BLOCK_ENV_ACCESS_IN_NODE=false` allows expressions and Code nodes to read container environment variables, so do not add service tokens or other secrets to the n8n environment. For live Gmail, use n8n-managed service-token credentials and managed Gmail OAuth credentials before activating either workflow. See n8n's [HTTP Request credential options](https://docs.n8n.io/integrations/builtin/credentials/httprequest/), [environment access controls](https://docs.n8n.io/hosting/configuration/environment-variables/security/), [credential encryption setting](https://docs.n8n.io/hosting/configuration/environment-variables/deployment/), and [workflow credential sharing rules](https://docs.n8n.io/workflows/sharing/).
 
 ## Google OAuth setup for a separately authorized live test
 
@@ -89,7 +96,7 @@ Do not do this for automated tests or fake mode. Use a dedicated test mailbox an
 
 The `gmail.compose` scope also grants permission to send mail. This workflow does not send, but OAuth does not enforce that limitation. Google's [Gmail scope reference](https://developers.google.com/workspace/gmail/api/auth/scopes) marks both `gmail.readonly` and `gmail.compose` as restricted; a public application may need OAuth verification and a security assessment. n8n stores OAuth tokens encrypted in its database and refreshes access tokens through its credential runtime. Google expires refresh tokens after seven days when an external consent screen remains in Testing and requests Gmail scopes. The Compose volume stores the n8n database and generated encryption key, so protect and back up the volume as a secret. Localhost OAuth redirect URIs are intended for local testing, not public deployment.
 
-Rotate service tokens by replacing both API User Secrets and the corresponding `.env` values, then restart the API and n8n. Disable the API integration, set `SMARTINBOX_GMAIL_MODE=disabled`, deactivate the workflows, and revoke the Google grants when ending a live test.
+Rotate service tokens by updating the matching API User Secret and n8n **Bearer Auth** credential for each policy, then verify both paths before resuming the workflow. Disable the API integration, set `SMARTINBOX_GMAIL_MODE=disabled`, deactivate the workflows, and revoke the Google grants when ending a live test.
 
 ## Failure handling and reconciliation
 
@@ -100,4 +107,11 @@ Rotate service tokens by replacing both API User Secrets and the corresponding `
 
 ## Automated offline checks
 
-`npm test` also validates workflow exports, filters, credentials, API contracts, retry classification, message mapping, the fake path, and the absence of Gmail send or destructive nodes. These checks do not substitute for importing into n8n. Live OAuth, Gmail access, and Gmail draft creation are never part of normal tests.
+`npm test` also validates workflow exports, item correlation through accepted/duplicate/retry responses, bounded retry attempts, filters, managed credential configuration, API contracts, message mapping, the fake paths, and the absence of Gmail send or destructive nodes. These checks do not substitute for importing and executing in n8n. Live OAuth, Gmail access, and Gmail draft creation are never part of normal tests.
+
+## Local execution evidence — 2026-10-22
+
+- Imported both workflows into an isolated local `n8nio/n8n:2.44.5` volume and executed them with the n8n CLI. The temporary import placed each manual synthetic trigger first because `n8n execute --id` starts the first trigger in the workflow; the workflow graph and node parameters matched the checked-in exports. The workflows remained inactive.
+- Ran ingestion through the manual synthetic event against the Smart Inbox API and an isolated schema in the local `smartinbox_test` database. The API responses were `202` for the accepted message, `200` for the pre-seeded duplicate, and a controlled `503` followed by `202` for the retryable message. Each request retained its own Gmail message ID and correlation ID. All three messages reached `Processed` and created separate `PendingReview` work items.
+- Created an approved internal draft through the reviewer API, then executed the outbound workflow in `fake-ambiguous` mode. It claimed the export and recorded `ProviderOutcomeUnknown`; PostgreSQL showed `NeedsReconciliation`, one attempt, and no Gmail draft ID. The ambiguous branch made no Gmail API call.
+- No Gmail OAuth, live Gmail polling, Gmail draft, email send, or OpenAI request was used. These results verify the local workflow graph and API contract; they do not verify OAuth account identity or Google API behavior.
