@@ -1,6 +1,8 @@
 # Smart Inbox Automation
 
-Smart Inbox Automation is a local demo for receiving, validating, deduplicating, and querying normalized email messages. Phase 2 adds optional AI-assisted classification and bounded fact extraction after PostgreSQL persistence. Use synthetic messages only.
+Smart Inbox Automation is a private repository for a local demo that receives, validates, deduplicates, classifies, and reviews synthetic email messages. Phases 1–4 are implemented. The complete implementation is on `feature/gmail-n8n-integration`; `main` is the Phase 1 baseline. The Phase 4 branch is the repository default branch.
+
+For a fresh Windows machine, start with [docs/DEVELOPMENT_SETUP.md](docs/DEVELOPMENT_SETUP.md). Use synthetic data only. No real Gmail OAuth, live Gmail polling, external draft creation, email sending, or live OpenAI requests are included in automated validation.
 
 ## Architecture
 
@@ -21,7 +23,7 @@ The solution contains the eight required projects:
 - `SmartInbox.Domain`, `SmartInbox.Application`, `SmartInbox.Infrastructure`, `SmartInbox.API`
 - `SmartInbox.Domain.Tests`, `SmartInbox.Application.Tests`, `SmartInbox.Infrastructure.Tests`, `SmartInbox.API.Tests`
 
-See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for design decisions and boundaries, [docs/HANDOFF.md](docs/HANDOFF.md) for implementation status and continuation steps, and [docs/ROADMAP.md](docs/ROADMAP.md) for later phases.
+See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for design decisions and boundaries, [docs/HANDOFF.md](docs/HANDOFF.md) for implementation status and verification evidence, and [docs/ROADMAP.md](docs/ROADMAP.md) for remaining work.
 
 ## Requirements
 
@@ -181,7 +183,7 @@ After applying migrations and starting the API as above, open another PowerShell
 
 ```powershell
 Push-Location web
-npm install
+npm ci
 npm run dev
 ```
 

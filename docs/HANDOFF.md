@@ -1,8 +1,14 @@
-# Handoff — Smart Inbox Automation, Phase 3
+# Handoff — Smart Inbox Automation
 
-## Status
+## Current repository status
 
-Phase 3 is implemented and verified locally on `feature/human-review-and-drafts`, based on `40e5c1a` (`Fix Phase 2 classification review gaps`). The targeted acceptance fixes for provider-call authorization, unsaved fact verification, exact-revision draft approval, and frontend CI are included in the current local commit. It has not been pushed, deployed, or published. Phase 1/2 ingestion, classification, leases, retries, and original API contracts remain in place.
+The private repository is [Monkey-D-Luisi/email-automation](https://github.com/Monkey-D-Luisi/email-automation). `feature/gmail-n8n-integration` is the default and current development branch and contains the complete Phase 1–4 implementation. `main` remains the Phase 1 baseline; `feature/ai-email-classification` and `feature/human-review-and-drafts` preserve the Phase 2 and Phase 3 branch tips. The branch histories are preserved; no feature branch was merged into `main`.
+
+The project has no production deployment or live-provider acceptance. The complete setup for a second Windows computer is in [DEVELOPMENT_SETUP.md](DEVELOPMENT_SETUP.md). Repository publication does not copy User Secrets, OAuth credentials, n8n encrypted credentials, Docker volumes, local databases, or personal environment variables.
+
+## Historical Phase 3 implementation
+
+Phase 3 was implemented and verified locally on `feature/human-review-and-drafts`, based on `40e5c1a` (`Fix Phase 2 classification review gaps`). The targeted acceptance fixes for provider-call authorization, unsaved fact verification, exact-revision draft approval, and frontend CI are included in that branch history. Phase 1/2 ingestion, classification, leases, retries, and original API contracts remain in place.
 
 The review workflow uses a separate `WorkItem` aggregate. Successful classification creates the item and its initial audit event transactionally; the new migration also backfills existing processed messages. Human changes never overwrite the original classification. Verified facts, reviewer notes, versioned internal drafts, decisions, and append-only audit summaries are persisted independently. A local configured reviewer authenticates with an expiring cookie session and antiforgery protection. Approval does not send an email or create an external draft.
 
@@ -18,8 +24,21 @@ The `web/` Next.js 16.4.2 App Router panel supports reviewer sign-in, inbox filt
 - `dotnet ef migrations has-pending-model-changes`: passed; no pending model changes.
 - `dotnet list SmartInbox.sln package --vulnerable --include-transitive`: no vulnerable NuGet packages reported by configured sources.
 - In `web/`, `npm ci` installed 29 packages and found 0 vulnerabilities; `npm test`: **4/4 passed** (Node emitted its experimental type-stripping warning); `npm run build`: passed; `npm audit`: 0 vulnerabilities.
-- `.github/workflows/ci.yml` now has a Node 22 job for `npm ci`, frontend tests, production build, and `npm audit`. The workflow was not run by GitHub because this change remains local.
+- `.github/workflows/ci.yml` has a Node 22 job for `npm ci`, frontend tests, production build, and `npm audit`. At the Phase 3 checkpoint, this workflow had not yet been run by GitHub.
 - No live OpenAI calls, outbound email actions, or production/deployment checks were performed.
+
+## Hosted CI
+
+The CI workflow runs on pushes to `main` and `feature/**`, and on pull requests. It uses an isolated PostgreSQL service, fake provider implementations, and synthetic fixtures; it requires no production secrets and does not contact Gmail or OpenAI. View the latest hosted result in [GitHub Actions](https://github.com/Monkey-D-Luisi/email-automation/actions/workflows/ci.yml). Hosted CI results are distinct from the local verification recorded below.
+
+## Publication preparation verification — 2026-10-22
+
+- Local `dotnet restore SmartInbox.sln` and Release build passed; build reported zero warnings and errors.
+- PostgreSQL-backed `dotnet test SmartInbox.sln --configuration Release --no-build --no-restore` passed **118/118**: Domain 17, Application 51, Infrastructure 37, API 13. Tests used local PostgreSQL 17 in `smartinbox_test` and isolated test schemas.
+- EF reported no pending model changes. The NuGet vulnerability audit reported no vulnerable packages.
+- Frontend and n8n workflow tests passed **16/16**; the Next.js production build passed; `npm audit` reported zero vulnerabilities.
+- Gitleaks 8.30.1 scanned all 14 commits across the local branches with full redaction and found no leaks.
+- These are local results. Hosted GitHub Actions results are linked above and must be checked for the published branch separately.
 
 The Phase 3 baseline before this follow-up was 98 .NET tests (Domain 10, Application 46, Infrastructure 30, API 12) and 2 frontend tests. This follow-up adds three backend theory cases and two frontend regression cases, bringing the verified totals to 101 .NET tests and 4 frontend tests.
 

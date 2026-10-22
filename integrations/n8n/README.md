@@ -1,6 +1,6 @@
 # Gmail and n8n integration
 
-This local integration uses two n8n workflows and the existing Smart Inbox API. The workflows are exported inactive, contain no credential references or mailbox addresses, and require managed HTTP credentials to be assigned after import. n8n 2.44.5 is pinned in Compose. Use synthetic messages and a dedicated Gmail test account only.
+This local integration uses two n8n workflows and the existing Smart Inbox API. The complete implementation is on the private repository's `feature/gmail-n8n-integration` branch. The workflows are exported inactive, contain no credential references or mailbox addresses, and require managed HTTP credentials to be assigned after import. n8n 2.44.5 is pinned in Compose. Use synthetic messages and a dedicated Gmail test account only.
 
 ## Boundaries and workflow mapping
 

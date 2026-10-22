@@ -38,7 +38,7 @@ Migrations are applied explicitly with `dotnet ef database update`. No environme
 
 ## Phase 3 review design
 
-This design is recorded before adding reviewer authentication or review persistence.
+The implementation follows these review boundaries:
 
 - A `WorkItem` is a separate aggregate linked one-to-one to an inbound message. Successful classification creates it in the same database save that marks the message `Processed`; failed and in-flight messages cannot enter the queue. A unique source-message constraint makes concurrent completion safe. The original `EmailClassification` remains unchanged, and its `RequiresReview` value continues to describe only the original AI result.
 - A work item stores effective category and priority, typed reviewer-managed facts with explicit verification state, bounded notes, lifecycle, and an integer concurrency version. Review changes and their append-only audit entry commit together.
