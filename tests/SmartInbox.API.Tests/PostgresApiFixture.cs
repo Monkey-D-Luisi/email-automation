@@ -94,7 +94,7 @@ public sealed class PostgresApiFixture : IAsyncLifetime
                 }));
             builder.ConfigureTestServices(ConfigureTestDatabase);
         });
-        Client = factory.CreateClient();
+        Client = CreateConfiguredClient(factory);
         var configuredConnection = factory.Services.GetRequiredService<IConfiguration>().GetConnectionString("Database");
         if (new NpgsqlConnectionStringBuilder(configuredConnection).SearchPath != schemaName)
             throw new InvalidOperationException("The API test host did not use its isolated PostgreSQL schema.");
@@ -145,10 +145,24 @@ public sealed class PostgresApiFixture : IAsyncLifetime
                 services.AddSingleton(provider);
             });
         });
-        var client = processingFactory.CreateClient(new WebApplicationFactoryClientOptions { HandleCookies = true });
+        var client = CreateConfiguredClient(processingFactory);
         client.DefaultRequestHeaders.Authorization =
             new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", TestToken);
         return (processingFactory, client);
+    }
+
+    private HttpClient CreateConfiguredClient(WebApplicationFactory<Program> webApplicationFactory)
+    {
+        var previousConnectionString = Environment.GetEnvironmentVariable("ConnectionStrings__Database");
+        Environment.SetEnvironmentVariable("ConnectionStrings__Database", ConnectionString);
+        try
+        {
+            return webApplicationFactory.CreateClient(new WebApplicationFactoryClientOptions { HandleCookies = true });
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("ConnectionStrings__Database", previousConnectionString);
+        }
     }
 
     public async Task ResetAsync()
