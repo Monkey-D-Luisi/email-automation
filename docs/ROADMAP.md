@@ -18,6 +18,8 @@ Current limits: one configured reviewer, localhost/synthetic data only, and no r
 
 ## Phase 4 — Integrations
 
+The public source release retains Phase 4's contracts, inactive workflow templates, mappers, and tests. The optional n8n runtime is temporarily suspended and absent from Compose until a supported patched image is selected. The core offline demo remains available; see [the release resolution](PUBLIC_RELEASE_REVIEW.md).
+
 Implemented: one-configured-mailbox Gmail and Outlook ingestion through n8n, provider-scoped export intents and leases, separate service tokens, reviewer-confirmed destination/recipient, and inactive draft-only workflows. Live paths are disabled by default; no send operation exists. Outlook verifies `/me`, reads a custom test folder after a fixed cutoff, and requires manual reconciliation after uncertain draft creation. There is no durable Graph delta checkpoint. OAuth permissions remain broader than the workflow operations. Offline fake and synthetic paths are covered. A real Graph ingestion test passed with one authorized synthetic message and a fake classifier on 2026-10-29; external draft creation remains **not live-validated**. See [the n8n guide](../integrations/n8n/README.md) and [Outlook test setup](OUTLOOK_TEST_SETUP.md).
 
 The completed ingestion test does not authorize further mailbox access or external draft creation. Keep workflows inactive and obtain separate authorization for any future live validation. New developers create their own optional OAuth credentials; the offline demo does not require them. Do not use customer data or expose local services publicly.

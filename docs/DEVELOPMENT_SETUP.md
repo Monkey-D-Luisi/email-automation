@@ -133,13 +133,11 @@ Pop-Location
 
 GitHub Actions runs these checks on `main` and `feature/**` pushes and pull requests. CI uses an isolated PostgreSQL service and synthetic/fake provider paths; it needs no production secrets and makes no Gmail, Outlook, Graph, or OpenAI calls. The hosted result is separate from local test results; see [Handoff](HANDOFF.md) for the latest run.
 
-## Optional n8n integration in fake mode
+## Optional n8n runtime suspended
 
-The optional image is pinned to n8n 2.45.6 by digest and includes patched Node.js 26.12.1. Four workflow imports and eight synthetic executions passed in an isolated Docker environment; see [release validation](PUBLIC_RELEASE_REVIEW.md). The application demo and `npm test` workflow fixtures also run without this container. An existing configured n8n instance needs its own backed-up migration; the release validation did not modify that instance or its volume.
+This release supplies no runnable or recommended n8n image. Compose contains only PostgreSQL, and `.env.example` contains only its database settings. The four workflow templates and their offline tests remain available; see [the workflow reference](../integrations/n8n/README.md) and [release resolution](PUBLIC_RELEASE_REVIEW.md). Runtime restoration requires a supported patched image and isolated compatibility checks.
 
-The image dependency scan still has unresolved findings, including a separate OS Brotli library. Keep n8n outside routine setup until the remaining image blocker is resolved; the standalone offline demo remains available.
-
-n8n is optional and disabled by default. Its workflows are imported inactive. For local fake integration runs, set the matching provider mode in ignored `.env` and use n8n-managed test Bearer Auth credentials; the fake Outlook export records only a synthetic ID and makes no Graph request. Follow [the n8n guide](../integrations/n8n/README.md) and [Outlook test setup](OUTLOOK_TEST_SETUP.md) for configuration and the separate live-authentication boundary. Do not activate a live workflow as part of routine setup.
+Complete the API, fake-classifier, reviewer, and frontend steps above for the portfolio demo. They need no n8n process, OAuth credential, or mailbox access. Existing configured n8n instances, credentials, and volumes are outside this setup and were preserved; do not use orphan-removal or volume-cleanup commands against them.
 
 ## Local state that Git does not restore
 
@@ -153,8 +151,8 @@ Create new local credentials on each computer. Do not copy production or persona
 
 ## Troubleshooting
 
-- If ports `5432`, `5168`, `3000`, or `5678` are already bound, stop the conflicting local service or change the local port and matching API origin before retrying.
+- If ports `5432`, `5168`, or `3000` are already bound, stop the conflicting local service or change the local port and matching API origin before retrying.
 - Check PostgreSQL startup with `docker compose logs postgres` and `docker compose ps`.
-- The API and Next.js run on the host; local browser requests use `127.0.0.1`. For the optional n8n container, use `host.docker.internal` for the host API and follow the n8n guide to bind the API listener and allow that host name.
+- The API and Next.js run on the host; local browser requests use `127.0.0.1`. No host-wide API binding or Docker gateway access is needed for this source-only demo.
 - A missing test database means the PostgreSQL container was initialized without `docker/init/01-create-test-database.sql`; recreate a new local volume only if it contains no data you need, or create the dedicated `smartinbox_test` database manually.
 - A missing table means migrations have not been applied to the selected database. Run the explicit EF migration command above.

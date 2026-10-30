@@ -22,6 +22,13 @@ const [outlookIngestion, outlookExport, outlookFixture, outlookHtmlFixture, outl
 
 const normalizeSourceNewlines = source => source.replace(/\r\n?/g, "\n").trim();
 
+test("the public deployment keeps the optional n8n runtime unavailable", async () => {
+  const compose = await readFile(new URL("../../docker-compose.yml", integrationRoot), "utf8");
+  assert.match(compose, /^  postgres:/m);
+  assert.doesNotMatch(compose, /^\s*n8n\s*:/m);
+  assert.doesNotMatch(compose, /n8nio\/n8n|smartinbox-n8n|N8N_/);
+});
+
 test("committed API and integration settings keep provider actions disabled", async () => {
   const settings = await readJson("../../src/SmartInbox.API/appsettings.json");
   assert.equal(settings.EmailProcessing.Enabled, false);
@@ -35,8 +42,7 @@ test("committed API and integration settings keep provider actions disabled", as
   assert.equal(settings.OpenAI.ApiKey, undefined);
   const environment = await readFile(new URL("../../.env.example", integrationRoot), "utf8");
   assert.match(environment, /^SMARTINBOX_DB_PASSWORD=\r?$/m);
-  assert.match(environment, /^SMARTINBOX_GMAIL_MODE=disabled\r?$/m);
-  assert.match(environment, /^SMARTINBOX_OUTLOOK_MODE=disabled\r?$/m);
+  assert.doesNotMatch(environment, /^SMARTINBOX_(?:GMAIL|OUTLOOK|API_ORIGIN)/m);
 });
 
 function executeSyntheticFixture() {

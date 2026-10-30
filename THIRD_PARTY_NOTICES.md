@@ -7,7 +7,7 @@ This repository distributes source and package references, not vendored package 
 ## Optional runtimes and notable terms
 
 - MediatR is pinned to **12.5.0**, whose package metadata and [versioned upstream license](https://github.com/LuckyPennySoftware/MediatR/blob/v12.5.0/LICENSE) identify Apache-2.0. Do not assume later major versions have identical terms.
-- The optional n8n 2.45.6 Community runtime is separately licensed under the [Sustainable Use License](https://github.com/n8n-io/n8n/blob/n8n%402.45.6/LICENSE.md), with additional terms for enterprise code. It is not covered by Smart Inbox's MIT license. It is optional, downloaded separately through Compose, and not needed for the offline application demo. See [n8n's license guidance](https://support.n8n.io/article/can-i-use-your-license-for-my-use-case) before redistributing or embedding it in a service.
+- The previously evaluated n8n 2.45.6 Community runtime has its own [Sustainable Use License](https://github.com/n8n-io/n8n/blob/n8n%402.45.6/LICENSE.md) and additional enterprise terms. This source release retains workflow templates but suspends runtime provisioning: no n8n image is bundled or recommended. Smart Inbox's MIT license does not relicense n8n. See [n8n's license guidance](https://support.n8n.io/article/can-i-use-your-license-for-my-use-case) before any future redistribution or embedding.
 - PostgreSQL uses the [PostgreSQL License](https://www.postgresql.org/about/licence/). Compose downloads its image separately.
 - Next.js transitively references Sharp and platform-specific libvips binaries. The lockfile includes **LGPL-3.0-or-later** libvips packages and a combined-license WASM package. Review the actual platform bundle's notices and [Sharp licensing guidance](https://sharp.pixelplumbing.com/install/#licensing) before distributing native binaries or images.
 - `caniuse-lite` data is attributed to its upstream [Can I Use authors](https://github.com/browserslist/caniuse-lite) under CC-BY-4.0.
@@ -171,4 +171,4 @@ All entries in `web/package-lock.json`, including development and optional packa
 | [typescript](https://www.npmjs.com/package/typescript/v/5.9.3) | 5.9.3 | Apache-2.0 | development |
 | [undici-types](https://www.npmjs.com/package/undici-types/v/6.21.0) | 6.21.0 | MIT | development |
 
-Refresh this inventory after dependency changes. Final release preparation upgraded the optional n8n image from 2.44.5 to 2.45.6; the listed application NuGet/npm dependency versions are unchanged.
+Refresh this inventory after dependency changes. The final public source scope removes n8n runtime provisioning and pins the verified PostgreSQL image. The listed application NuGet/npm dependency versions are unchanged.

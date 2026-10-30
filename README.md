@@ -13,10 +13,11 @@ The demo runs with new local credentials, an empty PostgreSQL database, and the 
 | Ingestion, deduplication, classification, review, internal drafts | Automated synthetic/fake-provider tests against PostgreSQL. The fake classifier always requires human review and does not measure AI accuracy. |
 | Outlook Graph ingestion | A separately authorized real-provider test passed on 2026-10-29 with one synthetic message: Graph retrieval, API `202`, persistence, fake classification, one `PendingReview` work item, and identical replay `200` without duplication. Outlook workflows were left unpublished and disabled. |
 | Gmail/Outlook external draft creation | Implemented and covered with fake responses; **not live-validated** against either provider. Internal approval does not create an external draft. |
+| Optional n8n runtime | **Temporarily unavailable.** Four inactive workflow templates and offline tests are retained; no n8n image is provisioned or recommended. |
 | OpenAI classification and draft proposals | Optional adapters tested with fake responses; no live model evaluation is claimed. |
 | Email sending | No send operation is implemented in the application or workflow exports. |
 
-The Outlook result is operator-provided acceptance evidence; public-release preparation does not repeat that test. See [release preparation](docs/PUBLIC_RELEASE_REVIEW.md) for the audit scope, checks, and outstanding decisions.
+The Outlook result is operator-provided acceptance evidence; public-release preparation does not repeat that test. See [release preparation](docs/PUBLIC_RELEASE_REVIEW.md) for the checks, dependency findings, and source-release scope.
 
 ## Architecture
 
@@ -218,13 +219,11 @@ The backend integration test `WorkItemEndpointsTests.Reviewer_can_correct_verify
 
 ### Gmail and n8n integration
 
-Compose pins stable **n8n 2.45.6** by image digest, including **Node.js 26.12.1**. This addresses the identified [credential redirect advisory](https://github.com/n8n-io/n8n/security/advisories/GHSA-prmc-fg87-r4gh) and [Node.js runtime vulnerabilities](https://nodejs.org/en/blog/vulnerability/october-2026-security-releases). All four inactive workflow imports and eight synthetic executions passed in an isolated Docker network without Internet access or OAuth credentials. See [release validation](docs/PUBLIC_RELEASE_REVIEW.md). The existing configured instance and its volume were preserved; applying the new image to existing data is a separate operator migration.
+**The optional n8n runtime is temporarily unavailable in this public source release.** Compose runs PostgreSQL only; no n8n service, image, port, or volume is declared. The evaluated vendor image retains unresolved dependency findings, and its hardened runtime has no package manager for a minimal supported update. It is not recommended for deployment. See [the release resolution](docs/PUBLIC_RELEASE_REVIEW.md).
 
-**Image dependency blocker:** the exact image scan still reports the Brotli CVE in a separate OS library and additional dependency advisories. The candidate is not yet publication ready; keep the optional runtime outside new live setup until the [remaining findings](docs/PUBLIC_RELEASE_REVIEW.md) are resolved. The standalone offline application needs no n8n container.
+All four inactive Gmail/Outlook workflow templates, mappers, fixtures, and offline tests remain in [integrations/n8n](integrations/n8n/README.md). They preserve the integration design and prior validation evidence. A supported patched runtime must be selected and tested before container provisioning or new live integration use resumes. The existing configured local n8n instance and its data were not modified.
 
-Phase 4 includes Gmail and Outlook integrations through an optional, disabled-by-default n8n container. Importable workflow exports remain inactive. Start n8n only when needed with `docker compose --profile integrations up -d n8n`; the editor listens on `http://127.0.0.1:5678`. The API remains on the host, so when using n8n in Docker, start it with `ASPNETCORE_URLS=http://0.0.0.0:5168` and allow the `host.docker.internal` host header. Stop the listener after the local integration session. The workflows use the host gateway and separate service tokens; they do not use the browser reviewer cookie.
-
-Follow [integrations/n8n/README.md](integrations/n8n/README.md) for local-only synthetic mode and workflow import. The step-by-step Outlook.com OAuth and isolated-folder procedure is in [docs/OUTLOOK_TEST_SETUP.md](docs/OUTLOOK_TEST_SETUP.md). Importing a workflow does not activate it. Internal approval alone never creates an external artifact; a reviewer must confirm the provider, configured mailbox, and recipient and request an unsent draft. Neither workflow has a send action. Gmail `gmail.compose` and Outlook `Mail.ReadWrite` allow broader provider operations than these draft-only workflows, so keep their credentials limited to an explicitly authorized test account.
+The core API, PostgreSQL, fake classifier, frontend, human review, and internal draft flow remain usable offline without n8n, Microsoft/Google accounts, or OAuth credentials. `npm test` continues to exercise the retained templates. The [Outlook guide](docs/OUTLOOK_TEST_SETUP.md) is design reference for future runtime restoration. Internal approval never creates an external artifact; export requires a separate reviewer intent and a running provider adapter. No send operation exists.
 
 An expired outbound claim or uncertain provider response requires manual reconciliation. Check the configured account's Drafts before retrying; a located external draft ID can be recorded in the review panel. Draft creation is not exactly-once, and email reply threading is unsupported in this MVP. Outlook polling is restricted to a configured custom test folder and fixed UTC cutoff; it re-reads that small scope on each run and has no durable Graph delta checkpoint.
 

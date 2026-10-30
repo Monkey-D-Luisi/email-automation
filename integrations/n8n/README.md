@@ -1,154 +1,56 @@
-# Gmail, Outlook, and n8n integration
+# Gmail and Outlook workflow source
 
-The release template pins stable **n8n 2.45.6** by digest and includes **Node.js 26.12.1**, addressing the identified [credential redirect advisory](https://github.com/n8n-io/n8n/security/advisories/GHSA-prmc-fg87-r4gh) and [runtime vulnerabilities](https://nodejs.org/en/blog/vulnerability/october-2026-security-releases). All four inactive workflow imports and eight synthetic executions passed using a new isolated volume and an internal Docker network without Internet access. No running instance, OAuth credential, or existing volume was modified. Applying the image to an existing instance is a separate backed-up migration.
+## Runtime temporarily unavailable
 
-**Remaining blocker:** this image still carries an affected OS Brotli library and other reported dependencies. The [release report](../../docs/PUBLIC_RELEASE_REVIEW.md) records these separately from the fixed Node binary. Do not treat the successful runtime tests as a clean vulnerability report or start a new live session before resolving that blocker.
+This public source release implements the safe source-only fallback. It supplies **no n8n container, Compose profile, recommended image, or runtime provisioning command**. The evaluated n8n 2.45.6 image retains unresolved OS and transitive dependency findings. Its hardened DHI runtime has no package manager for a minimal supported in-place build update. No derived image or binary replacement is provided.
 
-This local integration uses the existing Smart Inbox API with Gmail and Microsoft Graph workflows in n8n. The intended public release is `feature/outlook-graph-integration`, containing the complete Gmail and Outlook implementation. All workflow exports are inactive and contain no credential references, credential values, or personal mailbox addresses. Assign managed credentials after import. Compose pins `n8nio/n8n:2.45.6@sha256:45edf89655fd66dd55ea9336c1791ad14777599fdbf6c5aec6db583ede99a40b`. Use synthetic messages and isolated test mailboxes only.
+Compose deploys PostgreSQL only. The core API, fake classifier, frontend, human review, and internal drafts run offline without n8n or provider accounts. See [development setup](../../docs/DEVELOPMENT_SETUP.md) and [release resolution](../../docs/PUBLIC_RELEASE_REVIEW.md).
 
-Real Outlook ingestion passed a separately authorized one-synthetic-message test on 2026-10-29: Graph retrieval, API `202`, persistence, fake classification, one `PendingReview` work item, and identical replay `200` without duplication. Workflows were left unpublished and disabled. This is operator-provided acceptance evidence; release preparation did not repeat it. External Gmail/Outlook draft creation remains **not live-validated**. No live OpenAI validation is claimed.
+The existing configured n8n instance, credentials, and Docker volumes were preserved. Suspending this repository's runtime configuration does not patch that separate installation. Do not remove its orphaned container or volume as part of source-release setup.
 
-Both mappers cap raw HTML at 40,000 characters **before** conversion and retain the 40,000-character converted-text limit. Oversized HTML is quarantined as `message-html-too-long`, even when its visible text is short.
+## Preserved templates
 
-## Boundaries and workflow mapping
-
-| Workflow node | Smart Inbox contract or effect |
+| File | Purpose |
 | --- | --- |
-| Gmail Trigger | Polls up to 10 full parsed messages per minute from `INBOX`; excludes sent, drafts, spam, and trash; does not alter read state or labels. |
-| Manual Synthetic Gmail Event | Sends three distinct synthetic messages through the same mapper and API as a Gmail event. |
-| Map and Validate Gmail Message | Uses Gmail provider `id` and `threadId`; prefers parsed plain text, safely strips HTML if needed, and emits bounded diagnostic reasons without logging message content. |
-| Gmail API Ingestion | `POST /api/v1/integrations/gmail/messages`; the API supplies configured `SourceId` and `MailboxId`. It returns `202` for accepted, `200` for identical replay, and `409` for a conflicting replay. |
-| Poll Pending Gmail Draft Exports | Runs every minute and calls `POST /api/v1/integrations/gmail/draft-exports/claim`. PostgreSQL owns eligibility, snapshot, uniqueness, and leases. |
-| Create Synthetic Gmail Draft ID | In `fake` mode, creates only a synthetic ID. It does not call Google. |
-| Create Gmail Draft | In `live` mode, uses Gmail `Draft/Create` with the claimed subject, body, and recipient. It has no automatic retry. |
-| Record Gmail Draft ID / Record Provider Outcome Unknown | Calls the attempt-correlated complete or fail callback. A possibly successful Gmail call is marked ambiguous and is not reissued automatically. |
+| [gmail-ingestion.json](gmail-ingestion.json) | Synthetic/manual fixtures and the designed Gmail ingestion path, mapping provider identity to the authenticated API. |
+| [gmail-approved-draft-export.json](gmail-approved-draft-export.json) | Reviewer-authorized snapshot claim, fake completion/ambiguity paths, and the designed unsent Gmail draft adapter. |
+| [outlook-ingestion.json](outlook-ingestion.json) | Synthetic Graph fixtures, mailbox identity checks, custom-folder/cutoff polling design, and API mapping. |
+| [outlook-approved-draft-export.json](outlook-approved-draft-export.json) | Provider-scoped claims and callbacks, fake outcomes, and the designed unsent Graph draft adapter. |
 
-Only a reviewer can request an export, and only for the current approved revision. The persisted snapshot cannot be changed by n8n. Duplicate requests for the same revision, mailbox, and recipient return the existing export. The API audit records intent, claim, outcome, and manual reconciliation. A Gmail draft ID is an external draft artifact; it is not a sent email or delivery receipt.
+All four templates remain inactive and credential-free. Their source mappers, fixtures, and graph tests are retained unchanged. They are source examples, not a supported runtime deployment.
 
-The workflow creates a standalone draft. It does not reply in the original Gmail thread because the application does not retain the RFC headers required to establish that relationship safely. Attachments are represented as metadata where the Gmail parser supplies it; no bytes are downloaded or attached to outbound drafts.
+## Offline checks
 
-## Outlook Graph workflow mapping
+From the repository root:
 
-| Workflow node | Smart Inbox contract or effect |
-| --- | --- |
-| Poll Outlook Test Folder | Polls only the configured custom folder ID and messages received after the configured UTC cutoff. System folder aliases are rejected. The workflow does not mark, move, delete, or download messages. |
-| Verify Outlook Mailbox / Confirm Outlook Mailbox | Reads Graph `/me` and compares `mail` or `userPrincipalName` with `SMARTINBOX_OUTLOOK_MAILBOX_ID` before reading mail. A mismatch stops the live path. |
-| List Outlook Test Folder Messages | Uses Graph v1.0, immutable message IDs, text-body preference, bounded page size, selected message/recipient fields, attachment metadata only, and `@odata.nextLink` pagination. |
-| Map and Validate Outlook Message | Uses Graph `id` as the message identity, keeps `internetMessageId` as supplemental metadata, and keeps `conversationId` as a thread value. Plain text is preferred; HTML is converted to inert text. |
-| Outlook API Ingestion | `POST /api/v1/integrations/outlook/messages`; the API supplies configured `SourceId` and `MailboxId`. It returns `202` for accepted, `200` for identical replay, and `409` for a conflicting replay. |
-| Claim Outlook Export | Calls the provider-specific claim route. PostgreSQL owns eligibility, the exact approved snapshot, uniqueness, provider, and lease. |
-| Create Outlook Draft | In live mode calls only Graph `POST /me/messages` with the claimed subject, body, and recipient. It is not automatically retried and is accepted only when Graph returns an ID and `isDraft=true`. |
-| Record Outlook Draft ID / Record Outlook Outcome Unknown | Calls attempt-scoped Outlook callbacks. A possibly successful Graph request is marked ambiguous and is never blindly reissued. |
+```powershell
+Push-Location web
+npm ci
+npm test
+Pop-Location
+```
 
-Outlook live polling requires `SMARTINBOX_OUTLOOK_MODE=live`, the configured test folder, cutoff, mailbox, OAuth credential, and an identity match. The draft workflow uses the same reviewer-confirmed destination and recipient as Gmail. It creates an unsent item in Outlook Drafts; there is no send, reply, forward, edit, or delete operation. See [OUTLOOK_TEST_SETUP.md](../../docs/OUTLOOK_TEST_SETUP.md) for the Microsoft personal-account app registration, exact scopes, n8n callback, identity verification, and controlled test steps.
+These Node tests inspect the workflow graphs and execute synthetic mapper/decision code without Docker, OAuth, n8n, mailbox access, or external drafts. A deployment regression also rejects reintroducing an n8n runtime in the public Compose configuration.
 
-The fixed cutoff re-reads the small custom folder on each poll and relies on API idempotency. There is no durable Graph delta checkpoint. Keep the folder limited to a controlled test set. If Graph creates a draft and n8n loses the response, the export enters `NeedsReconciliation`; a reviewer inspects the intended Drafts folder and records a positively identified ID or confirms absence before retrying. The workflow does not search the entire mailbox or claim exactly-once creation.
+Both mappers bound raw HTML at 40,000 characters before conversion and preserve the converted-text limit. The tests cover identity, item pairing, retries, invalid inputs, source/template parity, inactive exports, and absence of send/destructive actions.
 
-## Local Docker setup
+## Contract and authorization boundaries
 
-The Compose service is optional and localhost-bound. It uses a separate `smartinbox-n8n-data` volume and mounts these workflow files read-only. The existing PostgreSQL image, database, and data volume are unchanged.
+- The API supplies each enabled integration's configured source and mailbox. Ingestion returns `202` for a new message, `200` for identical replay, and `409` for conflicting content.
+- The fake classifier is offline and always requires human review. AI drafting is independently disabled; selecting fake classification does not make AI drafting fake.
+- Internal draft approval does not create an external artifact. A separate reviewer intent binds the current approved revision, destination mailbox, and recipient. Provider-scoped workers can claim only its persisted snapshot.
+- An uncertain provider create becomes `NeedsReconciliation`. No automatic create replay or exactly-once external-draft guarantee is provided.
+- Template export modes default to `disabled`. Gmail's mode variable gates export, while Gmail ingestion is gated by workflow activation and credential assignment. Outlook's designed live path also checks mode, identity, folder, and cutoff.
+- Gmail compose and Outlook `Mail.ReadWrite` permissions are broader than the templates' draft-only operations. Templates contain no send action. Runtime restoration must retain those explicit authorization boundaries.
 
-1. Create `.env` from `.env.example` if needed. Set a local database password as described in the root README.
-2. Apply the new migration and run PostgreSQL as usual.
-3. Configure the API for the integration and the offline fake analyzer using User Secrets:
+[Architecture](../../docs/ARCHITECTURE.md) and [Outlook design/test reference](../../docs/OUTLOOK_TEST_SETUP.md) preserve the implementation details. OAuth instructions are reference material for future supported runtime selection, not instructions to enable an existing instance during this release.
 
-   ```powershell
-   $ingestionToken = [Convert]::ToHexString([System.Security.Cryptography.RandomNumberGenerator]::GetBytes(32))
-   $draftExportToken = [Convert]::ToHexString([System.Security.Cryptography.RandomNumberGenerator]::GetBytes(32))
-   dotnet user-secrets set 'GmailIntegration:Enabled' 'true' --project 'src/SmartInbox.API/SmartInbox.API.csproj'
-   dotnet user-secrets set 'GmailIntegration:SourceId' 'gmail' --project 'src/SmartInbox.API/SmartInbox.API.csproj'
-   dotnet user-secrets set 'GmailIntegration:MailboxId' 'gmail-test@example.test' --project 'src/SmartInbox.API/SmartInbox.API.csproj'
-   dotnet user-secrets set 'GmailIntegration:IngestionToken' $ingestionToken --project 'src/SmartInbox.API/SmartInbox.API.csproj'
-   dotnet user-secrets set 'GmailIntegration:DraftExportToken' $draftExportToken --project 'src/SmartInbox.API/SmartInbox.API.csproj'
-   dotnet user-secrets set 'EmailProcessing:Enabled' 'true' --project 'src/SmartInbox.API/SmartInbox.API.csproj'
-   dotnet user-secrets set 'EmailAnalysis:Provider' 'fake' --project 'src/SmartInbox.API/SmartInbox.API.csproj'
-   ```
+## Preserved validation evidence
 
-   The fake analyzer always returns an ambiguous, `Unknown` result that requires human review. It never sends a provider request and is unsuitable for classifying real messages. `EmailDrafting:Enabled` stays false.
+The prior evaluated image completed four inactive imports and eight isolated synthetic executions on 2026-10-30 using a new volume, internal Docker network, and mock API. That compatibility evidence remains valid for the unchanged templates; it does not clear the image's dependency findings. It was not rerun for the source-only fallback.
 
-4. Put only the non-secret API origin and fake mode in the ignored local `.env` for the n8n container:
+The operator's separately authorized real Outlook ingestion test passed on 2026-10-29: one synthetic message, Graph retrieval, API `202`, persistence, fake classification, one `PendingReview` item, and identical replay `200` without duplication. Workflows were left unpublished and disabled. No new mailbox access occurred. External Gmail/Outlook draft creation remains **not live-validated**.
 
-   ```powershell
-   $envLines = Get-Content -LiteralPath '.env' | Where-Object { $_ -notmatch '^(SMARTINBOX_API_ORIGIN|SMARTINBOX_GMAIL_MODE|SMARTINBOX_GMAIL_INGESTION_TOKEN|SMARTINBOX_GMAIL_DRAFT_EXPORT_TOKEN|SMARTINBOX_OUTLOOK_MODE|SMARTINBOX_OUTLOOK_MAILBOX_ID|SMARTINBOX_OUTLOOK_TEST_FOLDER_ID|SMARTINBOX_OUTLOOK_RECEIVED_AFTER)=' }
-   $envLines += "SMARTINBOX_API_ORIGIN=http://host.docker.internal:5168"
-   $envLines += 'SMARTINBOX_GMAIL_MODE=fake'
-   $envLines += 'SMARTINBOX_OUTLOOK_MODE=disabled'
-   Set-Content -LiteralPath '.env' -Value $envLines
-   ```
+## Restoring runtime support later
 
-5. Start the API on the host so Docker can reach it. The temporary host binding is broader than loopback; keep it limited to this local session and apply the host firewall policy appropriate to your machine. The host filter must allow the Docker DNS name:
-
-   ```powershell
-   $env:ASPNETCORE_URLS = 'http://0.0.0.0:5168'
-   $env:AllowedHosts = 'host.docker.internal;localhost;127.0.0.1'
-   dotnet run --no-launch-profile --project 'src/SmartInbox.API/SmartInbox.API.csproj'
-   ```
-
-6. In another terminal, start n8n and open `http://localhost:5678`:
-
-   ```powershell
-   docker compose --profile integrations up -d n8n
-   ```
-
-   The container maps `host.docker.internal` to the Docker host gateway, and its `SMARTINBOX_API_ORIGIN` uses that name. The n8n editor port is bound to `127.0.0.1`; its generated encryption key and OAuth credentials live in the named volume. Back up that volume securely if the credentials must survive host replacement; never commit it.
-
-7. Import `gmail-ingestion.json`, `gmail-approved-draft-export.json`, `outlook-ingestion.json`, and `outlook-approved-draft-export.json` from `/opt/smartinbox/workflows` through the n8n editor. All should remain inactive.
-
-8. In n8n, create two separate **Bearer Auth** credentials with the raw service-token values (do not include the `Bearer ` prefix). Assign the ingestion credential to **Gmail API Ingestion** and **Retry Gmail API Ingestion**. Assign the draft-export credential to **Claim Gmail Export**, **Record Gmail Draft ID**, and **Record Provider Outcome Unknown**. The workflow files intentionally contain no credential references or values. Run the ingestion workflow manually from **Manual Synthetic Gmail Event**. It submits three independent synthetic message identities; repeat runs exercise the API's duplicate response. The fake analyzer classifies messages as `Unknown` for reviewer inspection. Create, edit, and approve an internal draft, confirm the recipient in the review panel, and select **Create Gmail Draft**. Run the export workflow manually; `fake` mode records a synthetic Gmail draft ID through the normal completion callback. Set `SMARTINBOX_GMAIL_MODE=fake-ambiguous` only when deliberately validating the unknown-outcome path; it calls the normal API failure callback without contacting Gmail. Replaying requests returns existing state rather than creating a second record.
-
-To stop the temporary API listener, stop the `dotnet run` process. Stop n8n with `docker compose --profile integrations stop n8n`. The workflows remain inactive unless explicitly activated in n8n.
-
-## Service-token storage and n8n security
-
-The service tokens stay in .NET User Secrets on the API host and in n8n's managed **Bearer Auth** credentials. The workflow JSON does not contain tokens. n8n encrypts credential data in its database with `N8N_ENCRYPTION_KEY`; n8n generates a key on first launch unless an operator supplies one. Protect the n8n data volume and its backups, and store a custom encryption key separately from database backups. If the credential database and key are both exposed, the credentials can be decrypted.
-
-n8n execution inputs and outputs can contain complete synthetic messages and approved draft snapshots even when diagnostics are redacted. Protect execution history and backups, and review the instance's execution retention settings before any broader use. Keep local exports under the ignored `.local/` or `integrations/n8n/local/` directories; never copy credential-bearing exports or browser diagnostics into the tracked templates.
-
-n8n-managed credentials keep service tokens out of workflow exports and process environment variables, but they do not prevent an authorized workflow editor from using a credential in an HTTP Request node. Restrict editor/admin access and keep the separate ingestion and draft-export tokens scoped to their matching API policies. Do not export decrypted credential data.
-
-The local Compose setup keeps `SMARTINBOX_API_ORIGIN` and `SMARTINBOX_GMAIL_MODE` in `.env` because the workflows use them in expressions. These values are not secrets. `N8N_BLOCK_ENV_ACCESS_IN_NODE=false` allows expressions and Code nodes to read container environment variables, so do not add service tokens or other secrets to the n8n environment. For live Gmail, use n8n-managed service-token credentials and managed Gmail OAuth credentials before activating either workflow. See n8n's [HTTP Request credential options](https://docs.n8n.io/integrations/builtin/credentials/httprequest/), [environment access controls](https://docs.n8n.io/hosting/configuration/environment-variables/security/), [credential encryption setting](https://docs.n8n.io/hosting/configuration/environment-variables/deployment/), and [workflow credential sharing rules](https://docs.n8n.io/workflows/sharing/).
-
-The Outlook mode, authorized mailbox ID, test-folder ID, and received-after cutoff are also non-secret local settings. The Microsoft OAuth client secret and service bearer tokens must stay in managed n8n credentials; do not add them to `.env`. n8n encrypts credentials with the instance encryption key. Back up the n8n database volume and any configured `N8N_ENCRYPTION_KEY` separately and securely.
-
-## Google OAuth setup for a separately authorized live test
-
-Do not do this for automated tests or fake mode. Use a dedicated test mailbox and obtain explicit authorization before authorizing OAuth or activating either live workflow.
-
-1. Create or select a Google Cloud project and enable the Gmail API.
-2. Configure the OAuth consent screen. For a personal test, select the appropriate user type and add the exact test mailbox as a test user. Public applications using Gmail restricted scopes may require Google's verification and a security assessment.
-3. Create an OAuth client for a Web application. Add this authorized redirect URI exactly: `http://localhost:5678/rest/oauth2-credential/callback`.
-4. In n8n, create two separate **Gmail OAuth2 API** credentials using that client ID and secret. Keep the secret in n8n only. In each credential, enable **Custom Scopes**:
-   - Ingestion: `https://www.googleapis.com/auth/gmail.readonly`
-   - Draft creation: `https://www.googleapis.com/auth/gmail.compose`
-5. Authorize both credentials as the same dedicated test account. Set `GmailIntegration:MailboxId` to that account's email address and verify it matches both n8n credentials before importing/activating the live path. This MVP does not read the OAuth identity at runtime, so this account-to-mailbox check is an operator setup requirement.
-6. In the n8n editor, select the read-only credential on **Gmail Trigger** and the compose credential on **Create Gmail Draft**. Keep both workflows inactive while reviewing the nodes and testing the API connection.
-7. For live polling, set `SMARTINBOX_GMAIL_MODE=live`, keep `GmailIntegration:Enabled=true`, and activate the ingestion workflow only for the test mailbox. The export workflow can be activated only after an authorized reviewer has requested a draft. It only creates Gmail drafts; it has no send, reply, forward, delete, or trash node. Stop and deactivate both workflows to end the test.
-
-`SMARTINBOX_GMAIL_MODE` selects the **export** adapter; it does not guard the Gmail Trigger's reads. Keep the Gmail ingestion workflow inactive and do not execute its Gmail Trigger for offline work. Use only **Manual Synthetic Gmail Event**, which needs no Google credential. Outlook's live polling path has its own explicit mode, folder, cutoff, and identity checks.
-
-The `gmail.compose` scope also grants permission to send mail. This workflow does not send, but OAuth does not enforce that limitation. Google's [Gmail scope reference](https://developers.google.com/workspace/gmail/api/auth/scopes) marks both `gmail.readonly` and `gmail.compose` as restricted; a public application may need OAuth verification and a security assessment. n8n stores OAuth tokens encrypted in its database and refreshes access tokens through its credential runtime. Google expires refresh tokens after seven days when an external consent screen remains in Testing and requests Gmail scopes. The Compose volume stores the n8n database and generated encryption key, so protect and back up the volume as a secret. Localhost OAuth redirect URIs are intended for local testing, not public deployment.
-
-## Microsoft OAuth setup for a separately authorized live test
-
-Use the personal-account flow and isolated test-folder instructions in [docs/OUTLOOK_TEST_SETUP.md](../../docs/OUTLOOK_TEST_SETUP.md). It uses delegated `User.Read Mail.Read offline_access` for read-only ingestion and `User.Read Mail.ReadWrite offline_access` for draft creation. `Mail.ReadWrite` permits broader mailbox writes, while the workflow only calls `POST /me/messages`; no `Mail.Send` permission is requested. The workflow compares Graph `/me` with the locally configured mailbox before polling or claiming a live export. Both workflows remain inactive until explicitly activated by the operator.
-
-Rotate service tokens by updating the matching API User Secret and n8n **Bearer Auth** credential for each policy, then verify both paths before resuming the workflow. Disable the API integration, set `SMARTINBOX_GMAIL_MODE=disabled`, deactivate the workflows, and revoke the Google grants when ending a live test.
-
-## Failure handling and reconciliation
-
-- Ingestion accepts `202`, treats identical replay `200` as success, and reports conflicting replay `409` as an integration error. HTTP 429, 5xx, and transport failures use at most three attempts with exponential backoff. Authentication and validation errors are not retried. Diagnostics carry a bounded correlation ID and provider message ID, but not body or headers.
-- Export claims expire into `NeedsReconciliation`, not back into the automatic queue. If a Gmail result is uncertain, search the configured account's Drafts using the confirmed recipient, subject, and approximate creation time. If found, record its Gmail draft ID in the reviewer panel. If no matching draft exists, check the mailbox and explicitly confirm that before using **Retry after checking Gmail**. A retry is a new create attempt and could still duplicate if the earlier outcome was misidentified; exactly-once creation is not promised.
-- A Gmail error does not trigger a Gmail node retry. The workflow reports `ProviderOutcomeUnknown`; a failed completion callback is retried because recording the same callback is idempotent. If the callback remains unavailable, wait for lease expiry and reconcile rather than re-running Gmail creation.
-- `401` from the Smart Inbox API usually means the wrong integration token was copied or the corresponding API option is disabled. A connection error to `host.docker.internal` means the API is not listening on the host gateway or `AllowedHosts` rejected the request. A missing table means apply the migration before enabling the integration.
-- Outlook Graph `401`/`403` indicates an expired, mismatched, or insufficient delegated credential; verify the n8n credential and exact scopes. A mailbox identity mismatch stops before message listing or export claim. A Graph `429` waits for its bounded `Retry-After` value when available; Graph read retries are capped at three. The Outlook draft create call is never retried automatically after any uncertain result.
-
-## Automated offline checks
-
-`npm test` also validates workflow exports, item correlation through accepted/duplicate/retry responses, bounded retries, managed credential configuration, API contracts, Gmail and Outlook mapping, Graph pagination and mailbox checks, fake paths, and the absence of send or destructive provider operations. These checks do not substitute for importing and executing in n8n. Live OAuth, Gmail/Outlook access, Graph calls, and external draft creation are never part of normal tests.
-
-## Local execution evidence — 2026-10-22
-
-- Imported both workflows into an isolated local `n8nio/n8n:2.44.5` volume and executed them with the n8n CLI. The temporary import placed each manual synthetic trigger first because `n8n execute --id` starts the first trigger in the workflow; the workflow graph and node parameters matched the checked-in exports. The workflows remained inactive.
-- Ran ingestion through the manual synthetic event against the Smart Inbox API and an isolated schema in the local `smartinbox_test` database. The API responses were `202` for the accepted message, `200` for the pre-seeded duplicate, and a controlled `503` followed by `202` for the retryable message. Each request retained its own Gmail message ID and correlation ID. All three messages reached `Processed` and created separate `PendingReview` work items.
-- Created an approved internal draft through the reviewer API, then executed the outbound workflow in `fake-ambiguous` mode. It claimed the export and recorded `ProviderOutcomeUnknown`; PostgreSQL showed `NeedsReconciliation`, one attempt, and no Gmail draft ID. The ambiguous branch made no Gmail API call.
-- No Gmail OAuth, live Gmail polling, Gmail draft, email send, or OpenAI request was used. These results verify the local workflow graph and API contract; they do not verify OAuth account identity or Google API behavior.
+Select a supported patched image and record its immutable inputs, inspect all critical/high dependency findings with actual applicability evidence, then repeat inactive imports and synthetic execution in a fresh isolated environment without provider credentials. Only then deliberately restore deployment configuration and document its supported scope. Do not restore the suspended image through an override file, hidden profile, or unverified library replacement.

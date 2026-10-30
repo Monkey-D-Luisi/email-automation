@@ -1,5 +1,7 @@
 # Outlook Graph test setup
 
+**Runtime suspended for this public source release.** This document retains the OAuth and contract design for a future supported runtime. The repository supplies no n8n container or recommended image; do not start a new live session from these reference steps. See [the source-release resolution](PUBLIC_RELEASE_REVIEW.md). The existing configured instance and the completed live-test evidence below are preserved.
+
 ## Recorded validation status — 2026-10-29
 
 A separately authorized real Graph ingestion test has passed with one synthetic email: Graph retrieval, API `202`, one persisted message, classification by the **fake** provider requiring human review, one `PendingReview` work item, and identical replay `200` without duplication. Both Outlook workflows were left unpublished and disabled. This is operator-provided evidence; public-release preparation does not repeat the test or reconfigure the integration.
@@ -35,7 +37,7 @@ Microsoft may change portal labels and personal-account registration availabilit
 
 ## 2. Configure delegated OAuth in n8n
 
-Start the local n8n editor with `docker compose --profile integrations up -d n8n`; it is bound to `127.0.0.1:5678`. In **Credentials**, create two **OAuth2 API** credentials using Authorization Code:
+After runtime support is restored, a future separately authorized setup can create two **OAuth2 API** credentials using Authorization Code. No runtime provisioning command is currently supplied:
 
 | Setting | Outlook Graph read | Outlook Graph draft creation |
 | --- | --- | --- |
