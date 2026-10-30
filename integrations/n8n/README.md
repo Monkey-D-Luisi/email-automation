@@ -1,6 +1,14 @@
 # Gmail, Outlook, and n8n integration
 
-This local integration uses the existing Smart Inbox API with Gmail and Microsoft Graph workflows in n8n. The Outlook extension is on `feature/outlook-graph-integration`, based on the complete Gmail implementation. All workflow exports are inactive and contain no credential references, credential values, or mailbox addresses. Assign managed credentials after import. n8n 2.44.5 is pinned in Compose. Use synthetic messages and isolated test mailboxes only.
+The release template pins stable **n8n 2.45.6** by digest and includes **Node.js 26.12.1**, addressing the identified [credential redirect advisory](https://github.com/n8n-io/n8n/security/advisories/GHSA-prmc-fg87-r4gh) and [runtime vulnerabilities](https://nodejs.org/en/blog/vulnerability/october-2026-security-releases). All four inactive workflow imports and eight synthetic executions passed using a new isolated volume and an internal Docker network without Internet access. No running instance, OAuth credential, or existing volume was modified. Applying the image to an existing instance is a separate backed-up migration.
+
+**Remaining blocker:** this image still carries an affected OS Brotli library and other reported dependencies. The [release report](../../docs/PUBLIC_RELEASE_REVIEW.md) records these separately from the fixed Node binary. Do not treat the successful runtime tests as a clean vulnerability report or start a new live session before resolving that blocker.
+
+This local integration uses the existing Smart Inbox API with Gmail and Microsoft Graph workflows in n8n. The intended public release is `feature/outlook-graph-integration`, containing the complete Gmail and Outlook implementation. All workflow exports are inactive and contain no credential references, credential values, or personal mailbox addresses. Assign managed credentials after import. Compose pins `n8nio/n8n:2.45.6@sha256:45edf89655fd66dd55ea9336c1791ad14777599fdbf6c5aec6db583ede99a40b`. Use synthetic messages and isolated test mailboxes only.
+
+Real Outlook ingestion passed a separately authorized one-synthetic-message test on 2026-10-29: Graph retrieval, API `202`, persistence, fake classification, one `PendingReview` work item, and identical replay `200` without duplication. Workflows were left unpublished and disabled. This is operator-provided acceptance evidence; release preparation did not repeat it. External Gmail/Outlook draft creation remains **not live-validated**. No live OpenAI validation is claimed.
+
+Both mappers cap raw HTML at 40,000 characters **before** conversion and retain the 40,000-character converted-text limit. Oversized HTML is quarantined as `message-html-too-long`, even when its visible text is short.
 
 ## Boundaries and workflow mapping
 
@@ -73,7 +81,7 @@ The Compose service is optional and localhost-bound. It uses a separate `smartin
    ```powershell
    $env:ASPNETCORE_URLS = 'http://0.0.0.0:5168'
    $env:AllowedHosts = 'host.docker.internal;localhost;127.0.0.1'
-   dotnet run --project 'src/SmartInbox.API/SmartInbox.API.csproj'
+   dotnet run --no-launch-profile --project 'src/SmartInbox.API/SmartInbox.API.csproj'
    ```
 
 6. In another terminal, start n8n and open `http://localhost:5678`:
@@ -94,6 +102,8 @@ To stop the temporary API listener, stop the `dotnet run` process. Stop n8n with
 
 The service tokens stay in .NET User Secrets on the API host and in n8n's managed **Bearer Auth** credentials. The workflow JSON does not contain tokens. n8n encrypts credential data in its database with `N8N_ENCRYPTION_KEY`; n8n generates a key on first launch unless an operator supplies one. Protect the n8n data volume and its backups, and store a custom encryption key separately from database backups. If the credential database and key are both exposed, the credentials can be decrypted.
 
+n8n execution inputs and outputs can contain complete synthetic messages and approved draft snapshots even when diagnostics are redacted. Protect execution history and backups, and review the instance's execution retention settings before any broader use. Keep local exports under the ignored `.local/` or `integrations/n8n/local/` directories; never copy credential-bearing exports or browser diagnostics into the tracked templates.
+
 n8n-managed credentials keep service tokens out of workflow exports and process environment variables, but they do not prevent an authorized workflow editor from using a credential in an HTTP Request node. Restrict editor/admin access and keep the separate ingestion and draft-export tokens scoped to their matching API policies. Do not export decrypted credential data.
 
 The local Compose setup keeps `SMARTINBOX_API_ORIGIN` and `SMARTINBOX_GMAIL_MODE` in `.env` because the workflows use them in expressions. These values are not secrets. `N8N_BLOCK_ENV_ACCESS_IN_NODE=false` allows expressions and Code nodes to read container environment variables, so do not add service tokens or other secrets to the n8n environment. For live Gmail, use n8n-managed service-token credentials and managed Gmail OAuth credentials before activating either workflow. See n8n's [HTTP Request credential options](https://docs.n8n.io/integrations/builtin/credentials/httprequest/), [environment access controls](https://docs.n8n.io/hosting/configuration/environment-variables/security/), [credential encryption setting](https://docs.n8n.io/hosting/configuration/environment-variables/deployment/), and [workflow credential sharing rules](https://docs.n8n.io/workflows/sharing/).
@@ -113,6 +123,8 @@ Do not do this for automated tests or fake mode. Use a dedicated test mailbox an
 5. Authorize both credentials as the same dedicated test account. Set `GmailIntegration:MailboxId` to that account's email address and verify it matches both n8n credentials before importing/activating the live path. This MVP does not read the OAuth identity at runtime, so this account-to-mailbox check is an operator setup requirement.
 6. In the n8n editor, select the read-only credential on **Gmail Trigger** and the compose credential on **Create Gmail Draft**. Keep both workflows inactive while reviewing the nodes and testing the API connection.
 7. For live polling, set `SMARTINBOX_GMAIL_MODE=live`, keep `GmailIntegration:Enabled=true`, and activate the ingestion workflow only for the test mailbox. The export workflow can be activated only after an authorized reviewer has requested a draft. It only creates Gmail drafts; it has no send, reply, forward, delete, or trash node. Stop and deactivate both workflows to end the test.
+
+`SMARTINBOX_GMAIL_MODE` selects the **export** adapter; it does not guard the Gmail Trigger's reads. Keep the Gmail ingestion workflow inactive and do not execute its Gmail Trigger for offline work. Use only **Manual Synthetic Gmail Event**, which needs no Google credential. Outlook's live polling path has its own explicit mode, folder, cutoff, and identity checks.
 
 The `gmail.compose` scope also grants permission to send mail. This workflow does not send, but OAuth does not enforce that limitation. Google's [Gmail scope reference](https://developers.google.com/workspace/gmail/api/auth/scopes) marks both `gmail.readonly` and `gmail.compose` as restricted; a public application may need OAuth verification and a security assessment. n8n stores OAuth tokens encrypted in its database and refreshes access tokens through its credential runtime. Google expires refresh tokens after seven days when an external consent screen remains in Testing and requests Gmail scopes. The Compose volume stores the n8n database and generated encryption key, so protect and back up the volume as a secret. Localhost OAuth redirect URIs are intended for local testing, not public deployment.
 

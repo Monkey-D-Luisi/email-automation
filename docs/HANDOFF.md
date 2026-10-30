@@ -1,10 +1,18 @@
 # Handoff — Smart Inbox Automation
 
+## Final release candidate — 2026-10-30
+
+The intended complete release is `feature/outlook-graph-integration`, including all public-release improvements. The owner has accepted existing author/committer email disclosure; that decision is closed and history is preserved. Compose now pins stable n8n **2.45.6** by digest, verified with bundled **Node 26.12.1**. Four inactive workflow imports and eight synthetic CLI executions passed in an isolated Docker network without Internet access, using a new volume and mock API. The configured n8n instance, credentials, and volume were preserved.
+
+The complete .NET suite passed **125/125** and frontend/workflow tests passed **25/25**, with successful Release/frontend builds, fresh-database migrations, and no reported application NuGet/npm vulnerabilities. The exact image scan still reports an OS Brotli CVE and additional dependency advisories, so the candidate is **NOT READY** pending that dependency blocker. See [release validation](PUBLIC_RELEASE_REVIEW.md) for evidence and publication scope. Older sections below retain their dated historical results. The completed real Outlook ingestion test was not repeated, and external provider draft creation remains unvalidated.
+
 ## Current repository status
 
-The private repository is [Monkey-D-Luisi/email-automation](https://github.com/Monkey-D-Luisi/email-automation). The Outlook integration is developed on `feature/outlook-graph-integration`, based on the complete Phase 1–4 `feature/gmail-n8n-integration` branch. `main` remains the Phase 1 baseline; `feature/ai-email-classification` and `feature/human-review-and-drafts` preserve the Phase 2 and Phase 3 branch tips. The branch histories are preserved; no feature branch was merged into `main`.
+The repository is [Monkey-D-Luisi/email-automation](https://github.com/Monkey-D-Luisi/email-automation). The complete application is on `feature/outlook-graph-integration`, based on the Phase 1–4 `feature/gmail-n8n-integration` branch. `main` remains the Phase 1 baseline; other feature branches preserve earlier phases. No feature branch was merged into `main` as part of release preparation.
 
-The project has no production deployment or live-provider acceptance. The complete setup for a second Windows computer is in [DEVELOPMENT_SETUP.md](DEVELOPMENT_SETUP.md). Repository publication does not copy User Secrets, OAuth credentials, n8n encrypted credentials, Docker volumes, local databases, or personal environment variables.
+The project has no production deployment. A separately authorized real Outlook ingestion test passed on 2026-10-29 using one synthetic message and the fake classifier: Graph retrieval, HTTP `202`, one persisted message, one `PendingReview` item, and identical replay HTTP `200` without duplication. Workflows were left unpublished and disabled. This is operator-provided acceptance evidence; release preparation did not repeat it. External Gmail/Outlook draft creation and live OpenAI output have not been validated.
+
+See [public release review](PUBLIC_RELEASE_REVIEW.md) for current checks, findings and release decisions. Earlier sections below are dated historical checkpoints. The [development setup](DEVELOPMENT_SETUP.md) creates new local credentials and databases; publication does not copy User Secrets, OAuth credentials, n8n encrypted credentials, Docker volumes, local databases, or personal environment variables.
 
 ## Historical Phase 3 implementation
 

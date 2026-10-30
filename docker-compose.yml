@@ -1,6 +1,6 @@
 services:
   n8n:
-    image: n8nio/n8n:2.44.5
+    image: n8nio/n8n:2.45.6@sha256:45edf89655fd66dd55ea9336c1791ad14777599fdbf6c5aec6db583ede99a40b
     container_name: smartinbox-n8n
     profiles: ["integrations"]
     ports:
@@ -30,7 +30,7 @@ services:
     image: postgres:17-alpine
     container_name: smartinbox-postgres
     environment:
-      POSTGRES_DB: ${SMARTINBOX_DB_NAME:-smartinbox_test}
+      POSTGRES_DB: ${SMARTINBOX_DB_NAME:-smartinbox_dev}
       POSTGRES_USER: ${SMARTINBOX_DB_USER:-smartinbox}
       POSTGRES_PASSWORD: ${SMARTINBOX_DB_PASSWORD:?Set SMARTINBOX_DB_PASSWORD to a local random value}
     ports:

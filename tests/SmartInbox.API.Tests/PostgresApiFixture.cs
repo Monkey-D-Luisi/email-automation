@@ -8,6 +8,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Npgsql;
 using SmartInbox.Application.Messages.Classification.Ports;
+using SmartInbox.Application.Messages.Classification.Models;
 using SmartInbox.Infrastructure.Persistence;
 
 namespace SmartInbox.API.Tests;
@@ -83,20 +84,25 @@ public sealed class PostgresApiFixture : IAsyncLifetime
             await command.ExecuteNonQueryAsync();
         }
 
+        var configurationValues = new Dictionary<string, string?>
+        {
+            ["ConnectionStrings:Database"] = ConnectionString,
+            ["ServiceAuthentication:Token"] = TestToken,
+            ["ReviewAuthentication:Password"] = "synthetic-reviewer-password-for-tests-0123456789",
+            ["ReviewAuthentication:ReviewerId"] = "reviewer-1",
+            ["ReviewAuthentication:DisplayName"] = "Synthetic reviewer",
+            ["EmailProcessing:Enabled"] = "false",
+            ["EmailDrafting:Enabled"] = "false",
+            ["GmailIntegration:Enabled"] = "false",
+            ["OutlookIntegration:Enabled"] = "false",
+        };
         factory = new WebApplicationFactory<Program>().WithWebHostBuilder(builder =>
         {
-            builder.ConfigureAppConfiguration((_, configuration) => configuration.AddInMemoryCollection(
-                new Dictionary<string, string?>
-                {
-                    ["ConnectionStrings:Database"] = ConnectionString,
-                    ["ServiceAuthentication:Token"] = TestToken,
-                    ["ReviewAuthentication:Password"] = "synthetic-reviewer-password-for-tests-0123456789",
-                    ["ReviewAuthentication:ReviewerId"] = "reviewer-1",
-                    ["ReviewAuthentication:DisplayName"] = "Synthetic reviewer",
-                }));
+            builder.UseEnvironment("Testing");
+            builder.ConfigureAppConfiguration((_, configuration) => configuration.AddInMemoryCollection(configurationValues));
             builder.ConfigureTestServices(ConfigureTestDatabase);
         });
-        Client = CreateConfiguredClient(factory);
+        Client = CreateConfiguredClient(factory, configurationValues);
         var configuredConnection = factory.Services.GetRequiredService<IConfiguration>().GetConnectionString("Database");
         if (new NpgsqlConnectionStringBuilder(configuredConnection).SearchPath != schemaName)
             throw new InvalidOperationException("The API test host did not use its isolated PostgreSQL schema.");
@@ -121,30 +127,33 @@ public sealed class PostgresApiFixture : IAsyncLifetime
 
     public (WebApplicationFactory<Program> Host, HttpClient Client) CreateProcessingHost(IEmailAnalysisProvider provider)
     {
+        var configurationValues = new Dictionary<string, string?>
+        {
+            ["ConnectionStrings:Database"] = ConnectionString,
+            ["ServiceAuthentication:Token"] = TestToken,
+            ["ReviewAuthentication:Password"] = "synthetic-reviewer-password-for-tests-0123456789",
+            ["ReviewAuthentication:ReviewerId"] = "reviewer-1",
+            ["ReviewAuthentication:DisplayName"] = "Synthetic reviewer",
+            ["EmailProcessing:Enabled"] = "true",
+            ["EmailAnalysis:Provider"] = EmailAnalysisProviderTypeCodec.ToId(provider.ProviderType),
+            ["EmailDrafting:Enabled"] = "false",
+            ["EmailProcessing:PollIntervalSeconds"] = "1",
+            ["OpenAI:ApiKey"] = "synthetic-test-credential",
+            ["GmailIntegration:Enabled"] = "true",
+            ["GmailIntegration:SourceId"] = "gmail-test",
+            ["GmailIntegration:MailboxId"] = GmailTestMailboxId,
+            ["GmailIntegration:IngestionToken"] = GmailIngestionTestToken,
+            ["GmailIntegration:DraftExportToken"] = GmailDraftExportTestToken,
+            ["OutlookIntegration:Enabled"] = "true",
+            ["OutlookIntegration:SourceId"] = "outlook-test",
+            ["OutlookIntegration:MailboxId"] = GmailTestMailboxId,
+            ["OutlookIntegration:IngestionToken"] = OutlookIngestionTestToken,
+            ["OutlookIntegration:DraftExportToken"] = OutlookDraftExportTestToken,
+        };
         var processingFactory = new WebApplicationFactory<Program>().WithWebHostBuilder(builder =>
         {
-            builder.ConfigureAppConfiguration((_, configuration) => configuration.AddInMemoryCollection(
-                new Dictionary<string, string?>
-                {
-                    ["ConnectionStrings:Database"] = ConnectionString,
-                    ["ServiceAuthentication:Token"] = TestToken,
-                    ["ReviewAuthentication:Password"] = "synthetic-reviewer-password-for-tests-0123456789",
-                    ["ReviewAuthentication:ReviewerId"] = "reviewer-1",
-                    ["ReviewAuthentication:DisplayName"] = "Synthetic reviewer",
-                    ["EmailProcessing:Enabled"] = "true",
-                    ["EmailProcessing:PollIntervalSeconds"] = "1",
-                    ["OpenAI:ApiKey"] = "synthetic-test-credential",
-                    ["GmailIntegration:Enabled"] = "true",
-                    ["GmailIntegration:SourceId"] = "gmail-test",
-                    ["GmailIntegration:MailboxId"] = GmailTestMailboxId,
-                    ["GmailIntegration:IngestionToken"] = GmailIngestionTestToken,
-                    ["GmailIntegration:DraftExportToken"] = GmailDraftExportTestToken,
-                    ["OutlookIntegration:Enabled"] = "true",
-                    ["OutlookIntegration:SourceId"] = "outlook-test",
-                    ["OutlookIntegration:MailboxId"] = GmailTestMailboxId,
-                    ["OutlookIntegration:IngestionToken"] = OutlookIngestionTestToken,
-                    ["OutlookIntegration:DraftExportToken"] = OutlookDraftExportTestToken,
-                }));
+            builder.UseEnvironment("Testing");
+            builder.ConfigureAppConfiguration((_, configuration) => configuration.AddInMemoryCollection(configurationValues));
             builder.ConfigureTestServices(services =>
             {
                 ConfigureTestDatabase(services);
@@ -152,23 +161,29 @@ public sealed class PostgresApiFixture : IAsyncLifetime
                 services.AddSingleton(provider);
             });
         });
-        var client = CreateConfiguredClient(processingFactory);
+        var client = CreateConfiguredClient(processingFactory, configurationValues);
         client.DefaultRequestHeaders.Authorization =
             new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", TestToken);
         return (processingFactory, client);
     }
 
-    private HttpClient CreateConfiguredClient(WebApplicationFactory<Program> webApplicationFactory)
+    private static HttpClient CreateConfiguredClient(
+        WebApplicationFactory<Program> webApplicationFactory,
+        IReadOnlyDictionary<string, string?> configurationValues)
     {
-        var previousConnectionString = Environment.GetEnvironmentVariable("ConnectionStrings__Database");
-        Environment.SetEnvironmentVariable("ConnectionStrings__Database", ConnectionString);
+        // Minimal hosting reads infrastructure settings before the test configuration callback.
+        var environmentValues = configurationValues.ToDictionary(pair => pair.Key.Replace(":", "__"), pair => pair.Value);
+        var previousValues = environmentValues.Keys.ToDictionary(key => key, Environment.GetEnvironmentVariable);
         try
         {
+            foreach (var (key, value) in environmentValues)
+                Environment.SetEnvironmentVariable(key, value);
             return webApplicationFactory.CreateClient(new WebApplicationFactoryClientOptions { HandleCookies = true });
         }
         finally
         {
-            Environment.SetEnvironmentVariable("ConnectionStrings__Database", previousConnectionString);
+            foreach (var (key, value) in previousValues)
+                Environment.SetEnvironmentVariable(key, value);
         }
     }
 

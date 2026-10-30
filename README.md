@@ -1,8 +1,22 @@
 # Smart Inbox Automation
 
-Smart Inbox Automation is a private repository for a local demo that receives, validates, deduplicates, classifies, and reviews synthetic email messages. Phases 1–4 are implemented. The Outlook extension is on `feature/outlook-graph-integration`, based on the complete `feature/gmail-n8n-integration` Phase 4 branch; `main` is the Phase 1 baseline.
+Smart Inbox Automation is a local portfolio demonstration that receives, validates, deduplicates, classifies, and reviews synthetic email messages. Phases 1–4 are implemented. The complete application is on `feature/outlook-graph-integration`, based on the `feature/gmail-n8n-integration` Phase 4 branch; `main` is the Phase 1 baseline. Clone the complete demo with `git clone --branch feature/outlook-graph-integration https://github.com/Monkey-D-Luisi/email-automation.git`.
 
 For a fresh Windows machine, start with [docs/DEVELOPMENT_SETUP.md](docs/DEVELOPMENT_SETUP.md). Use synthetic data only. No live Gmail or Outlook OAuth, mailbox polling, external draft creation, email sending, Graph request, or live OpenAI request is included in automated validation.
+
+The demo runs with new local credentials, an empty PostgreSQL database, and the fake classifier. Microsoft/Google accounts, n8n OAuth credentials, OpenAI access, and the original developer's User Secrets are not required for the offline review flow.
+
+## Validation status
+
+| Capability | Evidence and limits |
+| --- | --- |
+| Ingestion, deduplication, classification, review, internal drafts | Automated synthetic/fake-provider tests against PostgreSQL. The fake classifier always requires human review and does not measure AI accuracy. |
+| Outlook Graph ingestion | A separately authorized real-provider test passed on 2026-10-29 with one synthetic message: Graph retrieval, API `202`, persistence, fake classification, one `PendingReview` work item, and identical replay `200` without duplication. Outlook workflows were left unpublished and disabled. |
+| Gmail/Outlook external draft creation | Implemented and covered with fake responses; **not live-validated** against either provider. Internal approval does not create an external draft. |
+| OpenAI classification and draft proposals | Optional adapters tested with fake responses; no live model evaluation is claimed. |
+| Email sending | No send operation is implemented in the application or workflow exports. |
+
+The Outlook result is operator-provided acceptance evidence; public-release preparation does not repeat that test. See [release preparation](docs/PUBLIC_RELEASE_REVIEW.md) for the audit scope, checks, and outstanding decisions.
 
 ## Architecture
 
@@ -130,7 +144,17 @@ The API accepts up to 10 attachment metadata entries (external ID, name, MIME ty
 
 ## Classification lifecycle
 
-When `EmailProcessing:Enabled` is `false` (the default), ingestion and retrieval work without OpenAI credentials or provider calls. To enable local processing, store the key in User Secrets and enable the worker:
+When `EmailProcessing:Enabled` is `false` (the default), ingestion and retrieval work without provider calls. For the offline demo, enable the fake classifier so synthetic messages reach the review queue:
+
+```powershell
+dotnet user-secrets set 'EmailAnalysis:Provider' 'fake' --project 'src/SmartInbox.API/SmartInbox.API.csproj'
+dotnet user-secrets set 'EmailProcessing:Enabled' 'true' --project 'src/SmartInbox.API/SmartInbox.API.csproj'
+dotnet user-secrets set 'EmailDrafting:Enabled' 'false' --project 'src/SmartInbox.API/SmartInbox.API.csproj'
+```
+
+Keep Gmail/Outlook integrations disabled. Fake classification requires no API key; create and edit internal drafts manually. AI drafting is a separate feature and still calls OpenAI if enabled. The complete offline instructions are in [development setup](docs/DEVELOPMENT_SETUP.md).
+
+Only for separately intended, billable OpenAI use, store your own key and explicitly select that provider:
 
 ```powershell
 dotnet user-secrets set 'OpenAI:ApiKey' '<your-openai-api-key>' --project 'src/SmartInbox.API/SmartInbox.API.csproj'
@@ -170,14 +194,15 @@ $reviewPassword = [Convert]::ToHexString([System.Security.Cryptography.RandomNum
 dotnet user-secrets set 'ReviewAuthentication:ReviewerId' 'local-reviewer' --project 'src/SmartInbox.API/SmartInbox.API.csproj'
 dotnet user-secrets set 'ReviewAuthentication:DisplayName' 'Local reviewer' --project 'src/SmartInbox.API/SmartInbox.API.csproj'
 dotnet user-secrets set 'ReviewAuthentication:Password' $reviewPassword --project 'src/SmartInbox.API/SmartInbox.API.csproj'
-Remove-Variable reviewPassword
 ```
+
+Use `$reviewPassword` when signing in and save it in a local password manager; then clear the shell variable with `Remove-Variable reviewPassword`.
 
 The reviewer session is a one-hour, non-persistent `HttpOnly`, `SameSite=Strict` cookie. Login, logout, and review mutations require ASP.NET Core antiforgery validation. The existing service bearer token still protects message ingestion and cannot satisfy the human-review policy. This is a single-operator localhost mechanism, not multi-user identity management.
 
 ### Run the web panel
 
-The web panel uses Next.js 16.4.2, TypeScript, and the App Router. Next.js requires Node.js 20.9 or later. Its same-origin rewrite forwards `/api/*` to `http://127.0.0.1:5168` by default; set `SMARTINBOX_API_ORIGIN` on the Next.js server process if the API listens elsewhere. No service token or provider key is sent to browser code.
+The web panel uses Next.js 16.4.2, TypeScript, and the App Router. Use a supported, security-patched Node.js release; Node.js **22.23.4 or a newer patched 22.x** matches CI and includes the [October 2026 security fixes](https://nodejs.org/en/blog/vulnerability/october-2026-security-releases). Its same-origin rewrite forwards `/api/*` to `http://127.0.0.1:5168` by default; set `SMARTINBOX_API_ORIGIN` on the Next.js server process if the API listens elsewhere. No service token or provider key is sent to browser code.
 
 After applying migrations and starting the API as above, open another PowerShell terminal:
 
@@ -192,6 +217,10 @@ Open `http://127.0.0.1:3000` and sign in with the configured reviewer password. 
 The backend integration test `WorkItemEndpointsTests.Reviewer_can_correct_verify_draft_approve_resolve_and_inspect_audit` runs the full workflow with a fake classifier and synthetic email: ingestion, classification, correction, fact verification, draft creation/edit/approval, resolution, and audit inspection. It uses an isolated PostgreSQL schema, makes no provider call, and sends no email. The Next.js app itself is build-checked; a live browser walkthrough is not part of the automated test suite. To populate a local panel, use a successfully classified synthetic message already in the configured database; the default-disabled worker intentionally does not classify new messages.
 
 ### Gmail and n8n integration
+
+Compose pins stable **n8n 2.45.6** by image digest, including **Node.js 26.12.1**. This addresses the identified [credential redirect advisory](https://github.com/n8n-io/n8n/security/advisories/GHSA-prmc-fg87-r4gh) and [Node.js runtime vulnerabilities](https://nodejs.org/en/blog/vulnerability/october-2026-security-releases). All four inactive workflow imports and eight synthetic executions passed in an isolated Docker network without Internet access or OAuth credentials. See [release validation](docs/PUBLIC_RELEASE_REVIEW.md). The existing configured instance and its volume were preserved; applying the new image to existing data is a separate operator migration.
+
+**Image dependency blocker:** the exact image scan still reports the Brotli CVE in a separate OS library and additional dependency advisories. The candidate is not yet publication ready; keep the optional runtime outside new live setup until the [remaining findings](docs/PUBLIC_RELEASE_REVIEW.md) are resolved. The standalone offline application needs no n8n container.
 
 Phase 4 includes Gmail and Outlook integrations through an optional, disabled-by-default n8n container. Importable workflow exports remain inactive. Start n8n only when needed with `docker compose --profile integrations up -d n8n`; the editor listens on `http://127.0.0.1:5678`. The API remains on the host, so when using n8n in Docker, start it with `ASPNETCORE_URLS=http://0.0.0.0:5168` and allow the `host.docker.internal` host header. Stop the listener after the local integration session. The workflows use the host gateway and separate service tokens; they do not use the browser reviewer cookie.
 
@@ -226,4 +255,4 @@ Pop-Location
 
 This application is limited to a local demo with synthetic data. Do not expose it to untrusted networks or process real customer email. Identity and authorization controls, credential rotation, retention and deletion, encryption, and operational controls would be needed before broader use. The email body is stored as plain text in PostgreSQL. Provider logs include outcome and bounded telemetry only; they omit bodies, sender addresses, prompts, response contents, API keys, and raw provider exception messages.
 
-Original code is distributed under the MIT License; MediatR 12.5.0 retains its Apache 2.0 license. See [LICENSE](LICENSE).
+Original code is distributed under the [MIT License](LICENSE). Dependencies retain their own licenses; see [third-party notices](THIRD_PARTY_NOTICES.md), including MediatR 12.5.0, optional libvips binaries, and the separately licensed optional n8n runtime. Report vulnerabilities as described in [SECURITY.md](SECURITY.md).

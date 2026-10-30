@@ -1,6 +1,6 @@
 # Development setup on Windows
 
-This guide targets the private `Monkey-D-Luisi/email-automation` repository. The complete Gmail baseline is on `feature/gmail-n8n-integration`; the Outlook extension is on `feature/outlook-graph-integration`. `main` remains the Phase 1 baseline; `feature/ai-email-classification` contains Phase 2 and `feature/human-review-and-drafts` contains Phase 3.
+This guide targets the `Monkey-D-Luisi/email-automation` portfolio demonstration. The complete implementation is on `feature/outlook-graph-integration`. `main` remains the Phase 1 baseline; the other feature branches preserve earlier phases. The offline demo needs no Microsoft, Google, n8n, or OpenAI account.
 
 Use synthetic email data only. This setup does not require OpenAI or Gmail/Outlook credentials and does not contact either provider or send email.
 
@@ -8,20 +8,18 @@ Use synthetic email data only. This setup does not require OpenAI or Gmail/Outlo
 
 - Git for Windows: `winget install --id Git.Git --exact`, or use the [official installer](https://git-scm.com/install/windows).
 - .NET 10 SDK: `winget install --id Microsoft.DotNet.SDK.10 --exact`. Verify with `dotnet --version`.
-- Node.js 22 for parity with CI. Next.js 16.4.2 also supports Node.js 20.9 and later. Install Node.js 22 from the [official download page](https://nodejs.org/en/download) and verify with `node --version` and `npm --version`.
+- A supported, patched Node.js release: **22.23.4 or a newer patched 22.x** for parity with CI and the [October 2026 security release](https://nodejs.org/en/blog/vulnerability/october-2026-security-releases). Install from the [official download page](https://nodejs.org/en/download) and verify with `node --version` and `npm --version`. The framework's older minimum version is not a security recommendation.
 - Docker Desktop with Docker Compose. Install using the [official Windows guide](https://docs.docker.com/desktop/setup/install/windows-install/) and start Docker Desktop before running containers.
 - PowerShell 7 is recommended for the commands below.
 - Rider or VS Code is optional.
 
 ## Clone the complete implementation
 
-Authenticate with an account that has access to the private repository, then run:
+Once the repository is public, cloning needs no GitHub sign-in. While it remains private, GitHub requires repository access. Run:
 
 ```powershell
-git clone https://github.com/Monkey-D-Luisi/email-automation.git
+git clone --branch feature/outlook-graph-integration https://github.com/Monkey-D-Luisi/email-automation.git
 Set-Location email-automation
-git fetch origin feature/outlook-graph-integration
-git switch --track origin/feature/outlook-graph-integration
 git status --short --branch
 ```
 
@@ -62,12 +60,17 @@ dotnet user-secrets set 'ReviewAuthentication:DisplayName' 'Local reviewer' --pr
 dotnet user-secrets set 'ReviewAuthentication:Password' $reviewerPassword --project $apiProject
 dotnet user-secrets set 'EmailProcessing:Enabled' 'true' --project $apiProject
 dotnet user-secrets set 'EmailAnalysis:Provider' 'fake' --project $apiProject
-Remove-Variable serviceToken, reviewerPassword
+dotnet user-secrets set 'EmailDrafting:Enabled' 'false' --project $apiProject
+dotnet user-secrets set 'GmailIntegration:Enabled' 'false' --project $apiProject
+dotnet user-secrets set 'OutlookIntegration:Enabled' 'false' --project $apiProject
+Remove-Variable serviceToken
 ```
 
 Keep the generic service token and reviewer password distinct. When an email integration is enabled, its ingestion and draft-export tokens must also be unique across all enabled authentication schemes; startup validation enforces this.
 
-Keep the reviewer password in a local password manager so you can sign in later. User Secrets are stored outside Git and are not restored by cloning the repository. The fake provider returns synthetic, review-required classifications. Do not switch to the OpenAI provider or enable AI draft generation unless you separately intend to configure and use a billable provider.
+Use `$reviewerPassword` to sign in, save it in a local password manager, then clear the shell variable with `Remove-Variable reviewerPassword`. User Secrets are stored outside Git and are not restored by cloning the repository. The fake provider returns synthetic, review-required classifications. Do not switch to the OpenAI provider or enable AI draft generation unless you separately intend to configure and use a billable provider.
+
+Environment variables can replace User Secrets entirely. In the terminal that runs migrations and the API, set `ConnectionStrings__Database`, `ServiceAuthentication__Token`, `ReviewAuthentication__ReviewerId`, `ReviewAuthentication__DisplayName`, and `ReviewAuthentication__Password` to your new local values, plus `EmailProcessing__Enabled=true`, `EmailAnalysis__Provider=fake`, `EmailDrafting__Enabled=false`, `GmailIntegration__Enabled=false`, and `OutlookIntegration__Enabled=false`. Environment variables take precedence over User Secrets. Keep them set until the API stops; when using this alternative, skip the `Remove-Item Env:ConnectionStrings__Database` cleanup below until then. Do not print or commit them. Keep the database password in the ignored `.env` for Compose; the API does not automatically load that file.
 
 Restore the local EF tool and apply migrations explicitly:
 
@@ -131,6 +134,10 @@ Pop-Location
 GitHub Actions runs these checks on `main` and `feature/**` pushes and pull requests. CI uses an isolated PostgreSQL service and synthetic/fake provider paths; it needs no production secrets and makes no Gmail, Outlook, Graph, or OpenAI calls. The hosted result is separate from local test results; see [Handoff](HANDOFF.md) for the latest run.
 
 ## Optional n8n integration in fake mode
+
+The optional image is pinned to n8n 2.45.6 by digest and includes patched Node.js 26.12.1. Four workflow imports and eight synthetic executions passed in an isolated Docker environment; see [release validation](PUBLIC_RELEASE_REVIEW.md). The application demo and `npm test` workflow fixtures also run without this container. An existing configured n8n instance needs its own backed-up migration; the release validation did not modify that instance or its volume.
+
+The image dependency scan still has unresolved findings, including a separate OS Brotli library. Keep n8n outside routine setup until the remaining image blocker is resolved; the standalone offline demo remains available.
 
 n8n is optional and disabled by default. Its workflows are imported inactive. For local fake integration runs, set the matching provider mode in ignored `.env` and use n8n-managed test Bearer Auth credentials; the fake Outlook export records only a synthetic ID and makes no Graph request. Follow [the n8n guide](../integrations/n8n/README.md) and [Outlook test setup](OUTLOOK_TEST_SETUP.md) for configuration and the separate live-authentication boundary. Do not activate a live workflow as part of routine setup.
 

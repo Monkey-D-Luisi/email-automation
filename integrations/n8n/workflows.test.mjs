@@ -22,6 +22,23 @@ const [outlookIngestion, outlookExport, outlookFixture, outlookHtmlFixture, outl
 
 const normalizeSourceNewlines = source => source.replace(/\r\n?/g, "\n").trim();
 
+test("committed API and integration settings keep provider actions disabled", async () => {
+  const settings = await readJson("../../src/SmartInbox.API/appsettings.json");
+  assert.equal(settings.EmailProcessing.Enabled, false);
+  assert.equal(settings.EmailDrafting.Enabled, false);
+  for (const provider of [settings.GmailIntegration, settings.OutlookIntegration]) {
+    assert.equal(provider.Enabled, false);
+    assert.equal(provider.MailboxId, "");
+    assert.equal(provider.IngestionToken, "");
+    assert.equal(provider.DraftExportToken, "");
+  }
+  assert.equal(settings.OpenAI.ApiKey, undefined);
+  const environment = await readFile(new URL("../../.env.example", integrationRoot), "utf8");
+  assert.match(environment, /^SMARTINBOX_DB_PASSWORD=\r?$/m);
+  assert.match(environment, /^SMARTINBOX_GMAIL_MODE=disabled\r?$/m);
+  assert.match(environment, /^SMARTINBOX_OUTLOOK_MODE=disabled\r?$/m);
+});
+
 function executeSyntheticFixture() {
   const source = ingestion.nodes.find(node => node.name === "Synthetic Parsed Gmail Fixture").parameters.jsCode;
   return new Function("$input", source)({ all: () => [] });
@@ -47,6 +64,26 @@ function executeForEachItem(workflow, nodeName, items, linkedItems = {}) {
     name => ({ item: { json: linkedItems[name][index] } })
   ));
 }
+
+test("both mappers bound raw HTML before conversion and retain the text limit", () => {
+  const rawHtmlAtLimit = `<p>ok</p>${" ".repeat(40000 - 9)}`;
+  const htmlCases = [
+    { body: rawHtmlAtLimit, valid: true },
+    { body: `${rawHtmlAtLimit} `, reason: "message-html-too-long" },
+    { body: "<".repeat(40001), reason: "message-html-too-long" },
+  ];
+  for (const { body, valid = false, reason } of htmlCases) {
+    const gmail = executeMapper([{ ...fixture, text: "", html: body }])[0].json;
+    const outlook = executeOutlookMapper([{ ...outlookFixture, body: { contentType: "html", content: body } }])[0].json;
+    for (const result of [gmail, outlook]) {
+      assert.equal(result.valid, valid);
+      if (valid) assert.equal(result.payload.bodyText, "ok");
+      else assert.equal(result.reason, reason);
+    }
+  }
+  assert.equal(executeMapper([{ ...fixture, text: "a".repeat(40001) }])[0].json.reason, "message-body-too-long");
+  assert.equal(executeOutlookMapper([{ ...outlookFixture, body: { contentType: "text", content: "a".repeat(40001) } }])[0].json.reason, "message-body-too-long");
+});
 
 test("both n8n exports are valid inactive workflows without credentials or machine-specific hosts", () => {
   for (const workflow of [ingestion, exportWorkflow]) {

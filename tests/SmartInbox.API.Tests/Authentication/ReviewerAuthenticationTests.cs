@@ -23,6 +23,9 @@ public sealed class ReviewerAuthenticationTests(PostgresApiFixture fixture)
         var session = await client.GetFromJsonAsync<ReviewerSession>("/api/v1/reviewer/session");
         Assert.Equal("reviewer-1", session!.ReviewerId);
         Assert.Equal("Synthetic reviewer", session.DisplayName);
+        Assert.False(session.AiDraftingEnabled);
+        Assert.False(session.GmailDraftExportEnabled);
+        Assert.False(session.OutlookDraftExportEnabled);
 
         client.DefaultRequestHeaders.Remove("X-CSRF-TOKEN");
         client.DefaultRequestHeaders.Add("X-CSRF-TOKEN", await GetAntiforgeryTokenAsync(client));
@@ -66,5 +69,10 @@ public sealed class ReviewerAuthenticationTests(PostgresApiFixture fixture)
 
     private sealed record AntiforgeryToken(string RequestToken);
 
-    private sealed record ReviewerSession(string ReviewerId, string DisplayName);
+    private sealed record ReviewerSession(
+        string ReviewerId,
+        string DisplayName,
+        bool AiDraftingEnabled,
+        bool GmailDraftExportEnabled,
+        bool OutlookDraftExportEnabled);
 }

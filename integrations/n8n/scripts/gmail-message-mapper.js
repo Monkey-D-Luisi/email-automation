@@ -46,6 +46,10 @@ function mapMessage(message) {
 
   const subject = typeof message.subject === "string" ? message.subject : "";
   if (subject.length > 998 || /[\r\n]/.test(subject)) return invalid("invalid-subject");
+  // Bound raw HTML before regex conversion, including messages with little visible text.
+  if (!(typeof message.text === "string" && message.text.trim()) &&
+      typeof message.html === "string" && message.html.length > 40000)
+    return invalid("message-html-too-long");
   const bodyText = typeof message.text === "string" && message.text.trim()
     ? message.text
     : typeof message.html === "string"

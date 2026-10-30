@@ -11,6 +11,15 @@ obj/
 .tools/
 TestResults/
 .playwright-mcp/
+*.har
+*.log
+.local/
+.secrets/
+secrets.json
+credentials.json
+appsettings.Local.json
+appsettings.*.local.json
+integrations/n8n/local/
 playwright-report/
 test-results/
 .n8n/

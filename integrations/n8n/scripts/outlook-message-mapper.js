@@ -52,6 +52,9 @@ function mapMessage(message) {
 
   const content = typeof message.body === "string" ? message.body : message.body?.content;
   const contentType = String(message.body?.contentType ?? "text").toLowerCase();
+  // Bound raw HTML before regex conversion, including messages with little visible text.
+  if (typeof content === "string" && contentType === "html" && content.length > 40000)
+    return invalid("message-html-too-long");
   const bodyText = typeof content !== "string" ? "" : contentType === "html" ? htmlToText(content) : content.trim();
   if (!bodyText.trim()) return invalid("message-body-empty");
   if (bodyText.length > 40000) return invalid("message-body-too-long");

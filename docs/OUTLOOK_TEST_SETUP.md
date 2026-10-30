@@ -1,5 +1,11 @@
 # Outlook Graph test setup
 
+## Recorded validation status — 2026-10-29
+
+A separately authorized real Graph ingestion test has passed with one synthetic email: Graph retrieval, API `202`, one persisted message, classification by the **fake** provider requiring human review, one `PendingReview` work item, and identical replay `200` without duplication. Both Outlook workflows were left unpublished and disabled. This is operator-provided evidence; public-release preparation does not repeat the test or reconfigure the integration.
+
+External Outlook and Gmail draft creation remain **not live-validated**. The procedure below is optional reference material for a future separately authorized session. The offline portfolio demo needs no Microsoft account or OAuth setup.
+
 This guide prepares a local, synthetic-first Outlook.com integration. The exported n8n workflows are inactive and both Outlook modes default to `disabled`. Do not activate a workflow until the account identity, test folder, cutoff, and API configuration have been checked.
 
 The committed workflow and configuration examples use placeholders only. Set `SMARTINBOX_OUTLOOK_MAILBOX_ID` and `OutlookIntegration:MailboxId` locally to the same authorized mailbox address; do not commit a personal address, OAuth secret, or token.
@@ -89,9 +95,9 @@ Import `integrations/n8n/outlook-ingestion.json` and `integrations/n8n/outlook-a
 
 For a synthetic-only workflow check, keep both workflows inactive. Run **Manual Synthetic Outlook Event** to send the synthetic Graph fixtures through Smart Inbox. For the outbound fake path, set `SMARTINBOX_OUTLOOK_MODE=fake` locally and run **Manual Synthetic Outlook Export Event** after a reviewer has created an approved Outlook export intent. `fake-ambiguous` exercises the unknown-outcome callback without calling Graph. Restore `disabled` after the local fake run.
 
-## 5. Separately authorize a controlled live test
+## 5. Separately authorize any future live validation
 
-After you have personally authorized both OAuth credentials, verify that `/me` resolves to the configured mailbox and that the folder ID is the dedicated test folder. Then, only for the separately approved test:
+The recorded ingestion result does not authorize additional reads or draft creation. For a future session, personally authorize the needed credentials, verify `/me` and the dedicated folder, and obtain separate approval for the exact live operation. The following checklist describes a combined test only when all its operations have been authorized:
 
 1. Add one synthetic email to the isolated custom folder and use a cutoff immediately before its received time.
 2. Set `SMARTINBOX_OUTLOOK_MODE=live`, set `OutlookIntegration:Enabled=true`, and activate only the Outlook ingestion workflow. Confirm one inbound message and its duplicate-safe replay in Smart Inbox, then deactivate polling.
