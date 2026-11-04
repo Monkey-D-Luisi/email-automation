@@ -1,5 +1,9 @@
 # Handoff — Smart Inbox Automation
 
+## Publication follow-up — 2026-11-04
+
+`main` contains the approved release `4231ff295a81ddb3bb1ed56369995d5afa309b59` and publication documentation updates. The release branch retains that exact reviewed commit. [Hosted release CI](https://github.com/Monkey-D-Luisi/email-automation/actions/runs/41798412266) passed backend, frontend, and Gitleaks jobs. See [main CI](https://github.com/Monkey-D-Luisi/email-automation/actions/workflows/ci.yml?query=branch%3Amain) for the final branch's hosted status. Subsequent development should use pull requests targeting `main`. The dated records below preserve the pre-publication evidence.
+
 ## Final release candidate — 2026-10-30
 
 The intended complete release is `feature/outlook-graph-integration`, including all public-release improvements. **Option B is READY FOR PUBLIC SOURCE RELEASE:** the optional n8n runtime is unavailable and removed from runnable configuration. The four inactive workflow templates/tests remain source examples. Compose and CI pin the verified PostgreSQL 17.11 image by digest. The core offline demo remains supported. The owner has accepted existing author/committer email disclosure; that decision is closed and history is preserved.
@@ -8,7 +12,7 @@ The complete candidate .NET suite passed **125/125**, with successful Release/fr
 
 ## Current repository status
 
-The repository is [Monkey-D-Luisi/email-automation](https://github.com/Monkey-D-Luisi/email-automation). The complete application is on `feature/outlook-graph-integration`, based on the Phase 1–4 `feature/gmail-n8n-integration` branch. `main` remains the Phase 1 baseline; other feature branches preserve earlier phases. No feature branch was merged into `main` as part of release preparation.
+The repository is [Monkey-D-Luisi/email-automation](https://github.com/Monkey-D-Luisi/email-automation). The complete application is on `main`, advanced from the reviewed `feature/outlook-graph-integration` release without rewriting commits. Existing feature branches preserve earlier phases and remain available.
 
 The project has no production deployment. A separately authorized real Outlook ingestion test passed on 2026-10-29 using one synthetic message and the fake classifier: Graph retrieval, HTTP `202`, one persisted message, one `PendingReview` item, and identical replay HTTP `200` without duplication. Workflows were left unpublished and disabled. This is operator-provided acceptance evidence; release preparation did not repeat it. External Gmail/Outlook draft creation and live OpenAI output have not been validated.
 

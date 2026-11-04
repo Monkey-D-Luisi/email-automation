@@ -1,6 +1,6 @@
 # Development setup on Windows
 
-This guide targets the `Monkey-D-Luisi/email-automation` portfolio demonstration. The complete implementation is on `feature/outlook-graph-integration`. `main` remains the Phase 1 baseline; the other feature branches preserve earlier phases. The offline demo needs no Microsoft, Google, n8n, or OpenAI account.
+This guide targets the `Monkey-D-Luisi/email-automation` portfolio demonstration. The complete reviewed implementation is on `main`; the existing feature branches preserve the development history. The offline demo needs no Microsoft, Google, n8n, or OpenAI account.
 
 Use synthetic email data only. This setup does not require OpenAI or Gmail/Outlook credentials and does not contact either provider or send email.
 
@@ -15,15 +15,15 @@ Use synthetic email data only. This setup does not require OpenAI or Gmail/Outlo
 
 ## Clone the complete implementation
 
-Once the repository is public, cloning needs no GitHub sign-in. While it remains private, GitHub requires repository access. Run:
+Clone the public source without a GitHub sign-in:
 
 ```powershell
-git clone --branch feature/outlook-graph-integration https://github.com/Monkey-D-Luisi/email-automation.git
+git clone https://github.com/Monkey-D-Luisi/email-automation.git
 Set-Location email-automation
 git status --short --branch
 ```
 
-The Outlook branch contains the complete Phase 1–4 implementation plus the Outlook extension. Keep local changes and secrets out of commits.
+The default `main` branch contains the complete Phase 1–4 implementation plus the Outlook extension. Keep local changes and secrets out of commits.
 
 ## Start PostgreSQL
 
@@ -132,6 +132,8 @@ Pop-Location
 ```
 
 GitHub Actions runs these checks on `main` and `feature/**` pushes and pull requests. CI uses an isolated PostgreSQL service and synthetic/fake provider paths; it needs no production secrets and makes no Gmail, Outlook, Graph, or OpenAI calls. The hosted result is separate from local test results; see [Handoff](HANDOFF.md) for the latest run.
+
+For subsequent development, create a branch from current `main` and open a focused pull request targeting `main`. Review the changes and wait for backend, frontend, and Gitleaks checks to pass before merging. No automatic deployment or provider execution is configured.
 
 ## Optional n8n runtime suspended
 

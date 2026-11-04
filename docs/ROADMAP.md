@@ -1,6 +1,6 @@
 # Roadmap
 
-Phases 1–4 and the Outlook extension are implemented on `feature/outlook-graph-integration`. `main` remains the Phase 1 baseline; other feature branches preserve earlier phases. See [DEVELOPMENT_SETUP.md](DEVELOPMENT_SETUP.md) to clone the complete offline demo and [the release review](PUBLIC_RELEASE_REVIEW.md) for the prioritized next-phase work.
+Phases 1–4 and the Outlook extension are implemented on `main`, including the reviewed Outlook release. Existing feature branches preserve earlier phases. See [DEVELOPMENT_SETUP.md](DEVELOPMENT_SETUP.md) to clone the complete offline demo and [the release review](PUBLIC_RELEASE_REVIEW.md) for the prioritized next-phase work. Use pull requests targeting `main` for subsequent changes.
 
 ## Phase 1 — Email ingestion and persistence
 

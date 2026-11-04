@@ -1,6 +1,6 @@
 # Smart Inbox Automation
 
-Smart Inbox Automation is a local portfolio demonstration that receives, validates, deduplicates, classifies, and reviews synthetic email messages. Phases 1–4 are implemented. The complete application is on `feature/outlook-graph-integration`, based on the `feature/gmail-n8n-integration` Phase 4 branch; `main` is the Phase 1 baseline. Clone the complete demo with `git clone --branch feature/outlook-graph-integration https://github.com/Monkey-D-Luisi/email-automation.git`.
+Smart Inbox Automation is a local portfolio demonstration that receives, validates, deduplicates, classifies, and reviews synthetic email messages. Phases 1–4 and the Outlook extension are implemented on `main`, which contains the reviewed `feature/outlook-graph-integration` release and preserves its history. Clone the complete demo with `git clone https://github.com/Monkey-D-Luisi/email-automation.git`.
 
 For a fresh Windows machine, start with [docs/DEVELOPMENT_SETUP.md](docs/DEVELOPMENT_SETUP.md). Use synthetic data only. No live Gmail or Outlook OAuth, mailbox polling, external draft creation, email sending, Graph request, or live OpenAI request is included in automated validation.
 

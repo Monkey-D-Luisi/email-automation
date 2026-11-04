@@ -1,5 +1,7 @@
 # Public source release resolution — 2026-10-30
 
+**Publication follow-up — 2026-11-04:** `main` includes the approved candidate `4231ff295a81ddb3bb1ed56369995d5afa309b59`. [Hosted candidate CI](https://github.com/Monkey-D-Luisi/email-automation/actions/runs/41798412266) passed backend, frontend, and Gitleaks jobs; see [main CI](https://github.com/Monkey-D-Luisi/email-automation/actions/workflows/ci.yml?query=branch%3Amain) for subsequent validation. The dated assessment below records the completed pre-publication review and was not repeated.
+
 **Verdict: READY FOR PUBLIC SOURCE RELEASE — Option B.** The optional n8n runtime is suspended and absent from every supplied runnable deployment configuration. The core offline API, PostgreSQL, frontend, fake classification, human review, and internal drafts remain supported. Four inactive workflow templates and their tests remain available as source examples.
 
 This completes the bounded container resolution on top of candidate `7c72933de710a27461c5fa51ed82e347cb55e46d`, on `feature/outlook-graph-integration`. The earlier source/history/privacy review, builds, and provider evidence are reused. No new full security audit was initiated. The owner's acceptance of existing Git email metadata is closed; history and attribution are preserved.
