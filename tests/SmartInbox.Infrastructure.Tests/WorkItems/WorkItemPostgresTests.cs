@@ -489,11 +489,13 @@ public sealed class WorkItemPostgresTests(PostgresFixture fixture)
         Assert.DoesNotContain("Gmail draft creation", audit.Summary);
     }
 
-    [Fact]
-    public async Task Editing_the_approved_draft_cancels_a_pending_export_before_dispatch()
+    [Theory]
+    [InlineData(DraftExportProvider.Gmail)]
+    [InlineData(DraftExportProvider.Outlook)]
+    public async Task Editing_the_approved_draft_cancels_a_pending_export_with_provider_specific_audit(DraftExportProvider provider)
     {
         await fixture.ResetAsync();
-        var (workItemId, requested) = await CreatePendingExportAsync();
+        var (workItemId, requested) = await CreatePendingExportAsync(provider);
         using var services = fixture.CreateServiceProvider();
         using var scope = services.CreateScope();
         var workItems = scope.ServiceProvider.GetRequiredService<IWorkItemRepository>();
@@ -503,12 +505,58 @@ public sealed class WorkItemPostgresTests(PostgresFixture fixture)
         item.SaveDraft("alex@example.test", "Synthetic response", "A new unapproved revision.", "reviewer-1", Now.AddMinutes(10));
         await workItems.SaveAsync(item);
 
-        Assert.Null(await exports.ClaimPendingAsync("test-mailbox", TimeSpan.FromMinutes(5), Now.AddMinutes(11)));
         var cancelled = Assert.Single(await exports.ListByWorkItemAsync(workItemId) ?? []);
         Assert.Equal(requested.Id, cancelled.Id);
         Assert.Equal(GmailDraftExportStatus.Cancelled, cancelled.Status);
-        Assert.Contains(await workItems.GetHistoryAsync(workItemId) ?? [],
-            entry => entry.Action == WorkItemAuditAction.GmailDraftExportCancelled);
+        Assert.Equal(0, cancelled.AttemptCount);
+        Assert.Equal(requested.ContentFingerprint, cancelled.ContentFingerprint);
+        var audit = Assert.Single(await workItems.GetHistoryAsync(workItemId) ?? [],
+            entry => entry.Action is WorkItemAuditAction.GmailDraftExportCancelled or WorkItemAuditAction.OutlookDraftExportCancelled);
+        Assert.Equal(provider == DraftExportProvider.Gmail
+            ? WorkItemAuditAction.GmailDraftExportCancelled
+            : WorkItemAuditAction.OutlookDraftExportCancelled, audit.Action);
+        Assert.Equal($"Pending {provider} draft export cancelled because the internal draft changed.", audit.Summary);
+        Assert.Equal("reviewer-1", audit.ActorId);
+        Assert.Equal(requested.Id, audit.EntityId);
+        Assert.Equal(requested.ApprovedRevision, audit.Revision);
+        Assert.Equal(Now.AddMinutes(10), audit.OccurredAt);
+        Assert.Null(await exports.ClaimPendingAsync(provider, "test-mailbox", TimeSpan.FromMinutes(5), Now.AddMinutes(11)));
+    }
+
+    [Fact]
+    public async Task Editing_a_draft_with_both_provider_exports_attributes_each_cancellation_independently()
+    {
+        await fixture.ResetAsync();
+        var (workItemId, gmailExport) = await CreatePendingExportAsync();
+        using var services = fixture.CreateServiceProvider();
+        using var scope = services.CreateScope();
+        var workItems = scope.ServiceProvider.GetRequiredService<IWorkItemRepository>();
+        var exports = scope.ServiceProvider.GetRequiredService<IGmailDraftExportRepository>();
+        var item = Assert.IsType<WorkItem>(await workItems.GetByIdAsync(workItemId));
+        var outlookExport = GmailDraftExport.Create(
+            item, "test-mailbox", "alex@example.test", "reviewer-1", Now.AddMinutes(4), DraftExportProvider.Outlook);
+        Assert.True((await exports.CreateOrGetAsync(outlookExport, item.Version)).Created);
+
+        item.SaveDraft("alex@example.test", "Synthetic response", "A new unapproved revision.", "reviewer-1", Now.AddMinutes(10));
+        await workItems.SaveAsync(item);
+
+        var persisted = await exports.ListByWorkItemAsync(workItemId) ?? [];
+        Assert.Equal(2, persisted.Count);
+        var history = await workItems.GetHistoryAsync(workItemId) ?? [];
+        var cancellations = history.Where(entry => entry.Action is
+            WorkItemAuditAction.GmailDraftExportCancelled or WorkItemAuditAction.OutlookDraftExportCancelled).ToArray();
+        Assert.Equal(2, cancellations.Length);
+        foreach (var requested in new[] { gmailExport, outlookExport })
+        {
+            var cancelled = Assert.Single(persisted, export => export.Id == requested.Id);
+            Assert.Equal(GmailDraftExportStatus.Cancelled, cancelled.Status);
+            Assert.Equal(requested.Provider, cancelled.Provider);
+            var audit = Assert.Single(cancellations, entry => entry.EntityId == requested.Id);
+            Assert.Equal(requested.Provider == DraftExportProvider.Gmail
+                ? WorkItemAuditAction.GmailDraftExportCancelled
+                : WorkItemAuditAction.OutlookDraftExportCancelled, audit.Action);
+            Assert.Equal($"Pending {requested.Provider} draft export cancelled because the internal draft changed.", audit.Summary);
+        }
     }
 
     private async Task<(Guid WorkItemId, GmailDraftExport Export)> CreatePendingExportAsync(
