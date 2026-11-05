@@ -347,6 +347,123 @@ public sealed class WorkItemPostgresTests(PostgresFixture fixture)
         Assert.Equal(claim.AttemptId, reconciled.AttemptId);
     }
 
+    [Theory]
+    [InlineData(DraftExportProvider.Gmail)]
+    [InlineData(DraftExportProvider.Outlook)]
+    public async Task Expiring_a_claim_leaves_pending_work_for_the_next_poll_and_other_providers_untouched(DraftExportProvider provider)
+    {
+        await fixture.ResetAsync();
+        var (expiredWorkItemId, _) = await CreatePendingExportAsync(provider);
+        using var services = fixture.CreateServiceProvider();
+        using var scope = services.CreateScope();
+        var exports = scope.ServiceProvider.GetRequiredService<IGmailDraftExportRepository>();
+        var expiredClaim = Assert.IsType<GmailDraftExport>(await exports.ClaimPendingAsync(
+            provider, "test-mailbox", TimeSpan.FromMinutes(5), Now.AddMinutes(5)));
+        var otherProvider = provider == DraftExportProvider.Gmail ? DraftExportProvider.Outlook : DraftExportProvider.Gmail;
+        var (otherWorkItemId, _) = await CreatePendingExportAsync(otherProvider);
+        var otherClaim = Assert.IsType<GmailDraftExport>(await exports.ClaimPendingAsync(
+            otherProvider, "test-mailbox", TimeSpan.FromMinutes(5), Now.AddMinutes(5)));
+        var (pendingWorkItemId, pending) = await CreatePendingExportAsync(provider);
+
+        Assert.Null(await exports.ClaimPendingAsync(provider, "test-mailbox", TimeSpan.FromMinutes(5), Now.AddMinutes(10)));
+
+        var expired = Assert.Single(await exports.ListByWorkItemAsync(expiredWorkItemId) ?? []);
+        Assert.Equal(GmailDraftExportStatus.NeedsReconciliation, expired.Status);
+        Assert.Equal(GmailDraftExportFailureKind.ProviderOutcomeUnknown, expired.FailureKind);
+        Assert.Equal(expiredClaim.AttemptId, expired.AttemptId);
+        Assert.Null(expired.LeaseExpiresAt);
+        var stillPending = Assert.Single(await exports.ListByWorkItemAsync(pendingWorkItemId) ?? []);
+        Assert.Equal(GmailDraftExportStatus.Pending, stillPending.Status);
+        Assert.Equal(0, stillPending.AttemptCount);
+        Assert.Equal(GmailDraftExportStatus.InProgress, Assert.Single(await exports.ListByWorkItemAsync(otherWorkItemId) ?? []).Status);
+
+        var workItems = scope.ServiceProvider.GetRequiredService<IWorkItemRepository>();
+        var auditAction = provider == DraftExportProvider.Gmail
+            ? WorkItemAuditAction.GmailDraftExportNeedsReconciliation
+            : WorkItemAuditAction.OutlookDraftExportNeedsReconciliation;
+        var audit = Assert.Single(await workItems.GetHistoryAsync(expiredWorkItemId) ?? [], entry => entry.Action == auditAction);
+        Assert.Equal(expired.Id, audit.EntityId);
+        Assert.Equal(expired.ApprovedRevision, audit.Revision);
+        Assert.Equal(provider == DraftExportProvider.Gmail ? "gmail-n8n" : "outlook-n8n", audit.ActorId);
+        Assert.Equal($"The {provider} draft export claim expired; provider outcome requires manual reconciliation.", audit.Summary);
+
+        var nextClaim = Assert.IsType<GmailDraftExport>(await exports.ClaimPendingAsync(
+            provider, "test-mailbox", TimeSpan.FromMinutes(5), Now.AddMinutes(10)));
+        Assert.Equal(pending.Id, nextClaim.Id);
+        Assert.Equal(1, nextClaim.AttemptCount);
+        var untouched = Assert.Single(await exports.ListByWorkItemAsync(otherWorkItemId) ?? []);
+        Assert.Equal(GmailDraftExportStatus.InProgress, untouched.Status);
+        Assert.Equal(otherClaim.AttemptId, untouched.AttemptId);
+    }
+
+    [Theory]
+    [InlineData(DraftExportProvider.Gmail)]
+    [InlineData(DraftExportProvider.Outlook)]
+    public async Task Claim_cancels_a_pending_export_when_its_destination_mailbox_is_no_longer_configured(DraftExportProvider provider)
+    {
+        await fixture.ResetAsync();
+        var (workItemId, requested) = await CreatePendingExportAsync(provider);
+        using var services = fixture.CreateServiceProvider();
+        using var scope = services.CreateScope();
+        var exports = scope.ServiceProvider.GetRequiredService<IGmailDraftExportRepository>();
+
+        Assert.Null(await exports.ClaimPendingAsync(provider, "replacement-mailbox", TimeSpan.FromMinutes(5), Now.AddMinutes(5)));
+
+        var cancelled = Assert.Single(await exports.ListByWorkItemAsync(workItemId) ?? []);
+        Assert.Equal(requested.Id, cancelled.Id);
+        Assert.Equal(GmailDraftExportStatus.Cancelled, cancelled.Status);
+        Assert.Equal(0, cancelled.AttemptCount);
+        Assert.Null(cancelled.AttemptId);
+        Assert.Equal(requested.ContentFingerprint, cancelled.ContentFingerprint);
+        Assert.Equal(Now.AddMinutes(5), cancelled.CompletedAt);
+        Assert.Null(await exports.ClaimPendingAsync(provider, "test-mailbox", TimeSpan.FromMinutes(5), Now.AddMinutes(6)));
+        var auditAction = provider == DraftExportProvider.Gmail
+            ? WorkItemAuditAction.GmailDraftExportCancelled
+            : WorkItemAuditAction.OutlookDraftExportCancelled;
+        var audit = Assert.Single(await scope.ServiceProvider.GetRequiredService<IWorkItemRepository>().GetHistoryAsync(workItemId) ?? [],
+            entry => entry.Action == auditAction);
+        Assert.Equal(requested.Id, audit.EntityId);
+        Assert.Equal(provider == DraftExportProvider.Gmail ? "gmail-n8n" : "outlook-n8n", audit.ActorId);
+        Assert.Equal($"Pending {provider} draft export cancelled because its destination is no longer configured.", audit.Summary);
+    }
+
+    [Theory]
+    [InlineData(DraftExportProvider.Gmail)]
+    [InlineData(DraftExportProvider.Outlook)]
+    public async Task Claim_cancels_a_pending_export_after_the_work_item_is_resolved(DraftExportProvider provider)
+    {
+        await fixture.ResetAsync();
+        var (workItemId, requested) = await CreatePendingExportAsync(provider);
+        using var services = fixture.CreateServiceProvider();
+        using var scope = services.CreateScope();
+        var exports = scope.ServiceProvider.GetRequiredService<IGmailDraftExportRepository>();
+        var workItems = scope.ServiceProvider.GetRequiredService<IWorkItemRepository>();
+        var item = Assert.IsType<WorkItem>(await workItems.GetByIdAsync(workItemId));
+        item.RejectFact(Assert.Single(item.Facts).Id, "reviewer-1", Now.AddMinutes(5));
+        await workItems.SaveAsync(item);
+        item = Assert.IsType<WorkItem>(await workItems.GetByIdAsync(workItemId));
+        item.Resolve("reviewer-1", Now.AddMinutes(6));
+        await workItems.SaveAsync(item);
+        Assert.Equal(GmailDraftExportStatus.Pending, Assert.Single(await exports.ListByWorkItemAsync(workItemId) ?? []).Status);
+
+        Assert.Null(await exports.ClaimPendingAsync(provider, "test-mailbox", TimeSpan.FromMinutes(5), Now.AddMinutes(7)));
+
+        var cancelled = Assert.Single(await exports.ListByWorkItemAsync(workItemId) ?? []);
+        Assert.Equal(requested.Id, cancelled.Id);
+        Assert.Equal(GmailDraftExportStatus.Cancelled, cancelled.Status);
+        Assert.Equal(0, cancelled.AttemptCount);
+        Assert.Null(cancelled.AttemptId);
+        Assert.Equal(requested.ContentFingerprint, cancelled.ContentFingerprint);
+        Assert.Equal(Now.AddMinutes(7), cancelled.CompletedAt);
+        var auditAction = provider == DraftExportProvider.Gmail
+            ? WorkItemAuditAction.GmailDraftExportCancelled
+            : WorkItemAuditAction.OutlookDraftExportCancelled;
+        var audit = Assert.Single(await workItems.GetHistoryAsync(workItemId) ?? [], entry => entry.Action == auditAction);
+        Assert.Equal(requested.Id, audit.EntityId);
+        Assert.Equal(provider == DraftExportProvider.Gmail ? "gmail-n8n" : "outlook-n8n", audit.ActorId);
+        Assert.Equal($"Pending {provider} draft export cancelled because its approved revision is no longer current.", audit.Summary);
+    }
+
     [Fact]
     public async Task Outlook_unknown_export_audit_names_the_provider_for_manual_reconciliation()
     {
