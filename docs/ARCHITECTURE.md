@@ -79,6 +79,22 @@ The workflow and API design below is retained as source. The public release temp
 
 Google's Gmail `gmail.compose` scope includes sending capability, and Microsoft's delegated `Mail.ReadWrite` permits broader mailbox writes, even though these workflows only create drafts. Use separate minimal delegated credentials and verify their account identities before live testing. Outlook performs a runtime `/me` mailbox check; Gmail account matching remains an operator setup check.
 
+### Shared draft-export lifecycle
+
+The `GmailDraftExport*` application, domain, and persistence types serve both Gmail and Outlook. Follow `DraftExportProvider` to identify the provider; the historical type names do not imply Gmail-only behavior. API contracts, stored names, audit actions, and Gmail-default overloads retain their existing compatibility behavior.
+
+| Step | Code to read | Business rule |
+| --- | --- | --- |
+| Request | [`GmailDraftExportCommands.cs`](../src/SmartInbox.Application/WorkItems/Commands/GmailDraftExportCommands.cs), [`GmailDraftExport.Create`](../src/SmartInbox.Domain/WorkItems/GmailDraftExport.cs), repository `CreateOrGetAsync` | The assigned reviewer confirms the current approved revision, saved recipient, and configured destination. The snapshot is immutable; the provider, draft, revision, destination, and recipient identify a repeated request. |
+| Claim | [`GmailDraftExportRepository.ClaimPendingAsync`](../src/SmartInbox.Infrastructure/WorkItems/Persistence/GmailDraftExportRepository.cs) | Process the oldest expired claim for this provider first. Otherwise select pending work, lock the work item before the export, and recheck destination, reviewer, and current approved revision before issuing a new attempt and lease. |
+| Provider result | Domain `Complete` / `Fail`, repository `MutateCallbackAsync` | Callbacks must match the provider and attempt. Repeated identical results are idempotent; stale or conflicting results cannot overwrite state. Expired leases and uncertain provider results require manual reconciliation. |
+| Retry | Command validator, repository `RetryAfterManualCheckAsync`, domain `RequeueAfterManualCheck` | The reviewer must confirm no external draft exists. The locked work item must still belong to that reviewer and match its expected version; the destination and current approved revision are checked again. |
+| Reconcile | Repository and domain `Reconcile` | The reviewer records an existing external draft ID for an unresolved export. Repeating the same successful reconciliation returns the existing result without another audit entry. |
+
+`ClaimPendingAsync` owns the transaction and commits. Its private `ProcessOldestExpiredClaimAsync` and `CancelPendingExportAsync` methods keep each state change and its audit entry together inside that transaction. Finding an expired candidate ends the poll, even if another worker handles that candidate before its locks are acquired; pending work waits for a later poll. An expired export is never automatically requeued.
+
+The persistence mapper restores and validates the snapshot through the domain entity. The lock helpers explicitly reload tracked rows after `FOR UPDATE`, so a scoped EF context cannot substitute stale values for the locked state.
+
 ## Classification and provider boundary
 
 The API persists an inbound message before background processing can claim it. `InboundMessageBackgroundService` starts no worker loops unless `EmailProcessing:Enabled` is true. Its bounded workers create a fresh dependency injection scope for each poll, so each claim and result write uses a short-lived `AppDbContext`.
