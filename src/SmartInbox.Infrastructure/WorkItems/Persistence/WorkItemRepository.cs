@@ -125,7 +125,7 @@ internal sealed class WorkItemRepository(AppDbContext dbContext) : IWorkItemRepo
     {
         var pending = await dbContext.GmailDraftExports.AsNoTracking()
             .Where(export => export.DraftId == draftId && export.Status == GmailDraftExportStatus.Pending.ToString())
-            .Select(export => new { export.Id, export.WorkItemId, export.ApprovedRevision })
+            .Select(export => new { export.Id, export.WorkItemId, export.ApprovedRevision, export.Provider })
             .ToArrayAsync(cancellationToken);
         foreach (var export in pending)
         {
@@ -141,9 +141,9 @@ internal sealed class WorkItemRepository(AppDbContext dbContext) : IWorkItemRepo
                     export.Id,
                     export.ApprovedRevision,
                     reviewerId,
-                    WorkItemAuditAction.GmailDraftExportCancelled,
+                    GmailDraftExportAudit.Action(Enum.Parse<DraftExportProvider>(export.Provider), WorkItemAuditAction.GmailDraftExportCancelled),
                     now,
-                    "Pending Gmail draft export cancelled because the internal draft changed."));
+                    $"Pending {export.Provider} draft export cancelled because the internal draft changed."));
         }
     }
 
